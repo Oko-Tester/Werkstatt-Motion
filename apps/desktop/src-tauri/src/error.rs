@@ -16,6 +16,14 @@ pub enum ErrorCode {
     Validation,
     NotFound,
     Database,
+    /// Ver- oder Entschlüsselung fehlgeschlagen (z. B. manipulierte Daten).
+    Crypto,
+    /// Schlüssel fehlt, obwohl bereits verschlüsselte Daten existieren.
+    KeyMissing,
+    /// Der Schlüsselspeicher des Betriebssystems ist nicht erreichbar.
+    KeystoreUnavailable,
+    /// Backup ist ungültig, beschädigt oder nicht lesbar.
+    Backup,
 }
 
 impl ApiError {
@@ -38,6 +46,43 @@ impl ApiError {
     pub fn database(message: &str) -> Self {
         Self {
             code: ErrorCode::Database,
+            message: message.to_string(),
+            field: None,
+        }
+    }
+
+    /// Bewusst ohne Details: Krypto-Fehlermeldungen dürfen weder Klartext
+    /// noch Schlüsselmaterial noch Herstellerdetails enthalten.
+    pub fn crypto() -> Self {
+        Self {
+            code: ErrorCode::Crypto,
+            message: "Verschlüsselte Daten konnten nicht verarbeitet werden".to_string(),
+            field: None,
+        }
+    }
+
+    pub fn key_missing() -> Self {
+        Self {
+            code: ErrorCode::KeyMissing,
+            message: "Schlüssel nicht gefunden, aber es existieren bereits verschlüsselte \
+                      Einträge. Es wird kein neuer Schlüssel erzeugt, um die Daten nicht \
+                      unlesbar zu machen."
+                .to_string(),
+            field: None,
+        }
+    }
+
+    pub fn keystore_unavailable() -> Self {
+        Self {
+            code: ErrorCode::KeystoreUnavailable,
+            message: "Der Schlüsselspeicher des Betriebssystems ist nicht erreichbar".to_string(),
+            field: None,
+        }
+    }
+
+    pub fn backup(message: &str) -> Self {
+        Self {
+            code: ErrorCode::Backup,
             message: message.to_string(),
             field: None,
         }

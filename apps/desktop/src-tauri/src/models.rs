@@ -99,3 +99,34 @@ pub struct PaymentPatch {
     pub amount_cents: Option<i64>,
     pub note: Option<String>,
 }
+
+/// Versteckter Eintrag, wie er entschlüsselt ans Frontend geht. In der
+/// Datenbank liegen Name, Betrag und Notiz ausschließlich verschlüsselt.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenEntry {
+    pub id: String,
+    pub name: String,
+    pub amount_cents: i64,
+    pub note: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub archived_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewHiddenEntry {
+    pub name: String,
+    pub amount_cents: i64,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenEntryPatch {
+    pub name: Option<String>,
+    pub amount_cents: Option<i64>,
+    pub note: Option<String>,
+}

@@ -37,6 +37,19 @@ const MIGRATIONS: &[&str] = &[
         archived_at   TEXT
     );
     CREATE INDEX idx_payments_open ON payments (paid_at, archived_at, created_at);",
+    // Version 2: Versteckte Einträge. Fachliche Inhalte (Bezeichnung, Betrag,
+    // Notiz) liegen ausschließlich als verschlüsselter Payload vor – es gibt
+    // bewusst keine Klartextspalten dafür.
+    "CREATE TABLE hidden_entries (
+        id                 TEXT PRIMARY KEY,
+        encrypted_payload  BLOB NOT NULL,
+        nonce              BLOB NOT NULL,
+        encryption_version INTEGER NOT NULL,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL,
+        archived_at        TEXT
+    );
+    CREATE INDEX idx_hidden_entries_active ON hidden_entries (archived_at, created_at);",
 ];
 
 /// Bringt die Datenbank auf die aktuelle Schemaversion. Läuft in einer
@@ -53,12 +66,16 @@ pub fn migrate(conn: &mut Connection) -> Result<(), ApiError> {
     Ok(())
 }
 
-#[cfg(test)]
 pub fn schema_version(conn: &Connection) -> Result<i64, ApiError> {
     Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
 }
 
-fn now(conn: &Connection) -> Result<String, ApiError> {
+/// Aktuelle Schemaversion des Codes (Zielversion der Migrationen).
+pub fn current_schema_version() -> i64 {
+    MIGRATIONS.len() as i64
+}
+
+pub fn now(conn: &Connection) -> Result<String, ApiError> {
     Ok(conn.query_row(
         "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
         [],
@@ -422,6 +439,7 @@ mod tests {
             .unwrap();
         assert!(tables.contains(&"vehicles".to_string()));
         assert!(tables.contains(&"payments".to_string()));
+        assert!(tables.contains(&"hidden_entries".to_string()));
     }
 
     #[test]
