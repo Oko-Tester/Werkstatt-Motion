@@ -3,12 +3,17 @@ import * as api from "./api";
 import { toApiError } from "./api";
 import { AppShell } from "./components/AppShell";
 import { Header } from "./components/Header";
+import { HiddenPanel } from "./components/HiddenPanel";
 import { PaymentsPanel } from "./components/PaymentsPanel";
 import { UndoBar } from "./components/UndoBar";
 import { VehicleTable } from "./components/VehicleTable";
 import { parseEuroInput } from "./money";
 import type {
   FieldErrors,
+  HiddenEntry,
+  HiddenEntryDraft,
+  HiddenStatus,
+  HiddenTextField,
   Payment,
   PaymentDraft,
   PaymentTextField,
@@ -59,11 +64,23 @@ function isPaymentDraftEmpty(draft: PaymentDraft): boolean {
   return draft.customerName.trim() === "" && draft.amountCents === null && draft.note.trim() === "";
 }
 
+function isHiddenDraftComplete(draft: HiddenEntryDraft): boolean {
+  return draft.name.trim() !== "" && draft.amountCents !== null && draft.amountCents > 0;
+}
+
+function isHiddenDraftEmpty(draft: HiddenEntryDraft): boolean {
+  return draft.name.trim() === "" && draft.amountCents === null && draft.note.trim() === "";
+}
+
 export default function App() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [vehicleDrafts, setVehicleDrafts] = useState<VehicleDraft[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [hiddenStatus, setHiddenStatus] = useState<HiddenStatus | null>(null);
+  const [hiddenEntries, setHiddenEntries] = useState<HiddenEntry[]>([]);
+  const [hiddenDrafts, setHiddenDrafts] = useState<HiddenEntryDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -81,6 +98,12 @@ export default function App() {
   paymentsRef.current = payments;
   const paymentDraftsRef = useRef(paymentDrafts);
   paymentDraftsRef.current = paymentDrafts;
+  const hiddenEntriesRef = useRef(hiddenEntries);
+  hiddenEntriesRef.current = hiddenEntries;
+  const hiddenDraftsRef = useRef(hiddenDrafts);
+  hiddenDraftsRef.current = hiddenDrafts;
+  const hiddenOpenRef = useRef(hiddenOpen);
+  hiddenOpenRef.current = hiddenOpen;
   const fieldErrorsRef = useRef(fieldErrors);
   fieldErrorsRef.current = fieldErrors;
 
@@ -582,8 +605,233 @@ export default function App() {
     }
   }
 
+  // ---------- Versteckter Bereich ----------
+
+  function openHiddenArea() {
+    // Mehrfachauslösung (z. B. weiteres Gedrückthalten) ist wirkungslos.
+    if (hiddenOpenRef.current) {
+      return;
+    }
+    setHiddenOpen(true);
+    void loadHiddenArea();
+  }
+
+  async function loadHiddenArea() {
+    try {
+      const status = await api.hiddenStatus();
+      setHiddenStatus(status);
+      if (status.unlocked) {
+        setHiddenEntries(await api.listHiddenEntries());
+      } else {
+        setHiddenEntries([]);
+      }
+    } catch (err) {
+      setHiddenStatus({ unlocked: false, error: toApiError(err) });
+      setHiddenEntries([]);
+    }
+  }
+
+  function closeHiddenArea() {
+    setHiddenOpen(false);
+    for (const draft of hiddenDraftsRef.current) {
+      clearFieldError(draft.draftId);
+    }
+    setHiddenDrafts([]);
+  }
+
+  function addHiddenEntry() {
+    const draft: HiddenEntryDraft = {
+      draftId: `draft-h-${crypto.randomUUID()}`,
+      name: "",
+      amountCents: null,
+      note: "",
+    };
+    setHiddenDrafts((prev) => [draft, ...prev]);
+    setAutoFocusId(draft.draftId);
+  }
+
+  function updateHiddenDraft(draftId: string, patch: Partial<HiddenEntryDraft>) {
+    const current = hiddenDraftsRef.current.find((draft) => draft.draftId === draftId);
+    if (!current) {
+      return;
+    }
+    const next = { ...current, ...patch };
+    setHiddenDrafts((prev) => prev.map((draft) => (draft.draftId === draftId ? next : draft)));
+    for (const field of Object.keys(patch)) {
+      clearFieldError(draftId, field);
+    }
+  }
+
+  async function createHiddenFromDraft(draft: HiddenEntryDraft) {
+    try {
+      const created = await api.createHiddenEntry({
+        name: draft.name,
+        amountCents: draft.amountCents ?? 0,
+        note: draft.note,
+      });
+      setHiddenDrafts((prev) => prev.filter((entry) => entry.draftId !== draft.draftId));
+      clearFieldError(draft.draftId);
+      setHiddenEntries((prev) => [...prev, created]);
+    } catch (err) {
+      const apiErr = toApiError(err);
+      setFieldError(draft.draftId, apiErr.field ?? "name", apiErr.message);
+    } finally {
+      creatingRef.current.delete(draft.draftId);
+    }
+  }
+
+  function handleHiddenDraftRowLeave(draftId: string) {
+    window.setTimeout(() => {
+      const draft = hiddenDraftsRef.current.find((entry) => entry.draftId === draftId);
+      if (!draft || creatingRef.current.has(draftId)) {
+        return;
+      }
+      if (isHiddenDraftEmpty(draft)) {
+        setHiddenDrafts((prev) => prev.filter((entry) => entry.draftId !== draftId));
+        clearFieldError(draftId);
+      } else if (isHiddenDraftComplete(draft)) {
+        creatingRef.current.add(draftId);
+        void createHiddenFromDraft(draft);
+      } else {
+        const existing = fieldErrorsRef.current[draftId] ?? {};
+        if (draft.name.trim() === "" && existing.name === undefined) {
+          setFieldError(draftId, "name", "Bezeichnung angeben");
+        } else if (draft.name.trim() !== "" && existing.amountCents === undefined) {
+          setFieldError(draftId, "amountCents", "Betrag angeben");
+        }
+      }
+    }, 0);
+  }
+
+  function commitHiddenText(id: string, field: HiddenTextField, value: string) {
+    if (isDraftId(id)) {
+      updateHiddenDraft(id, { [field]: value });
+      return;
+    }
+    void saveHiddenPatch(id, { [field]: value });
+  }
+
+  function commitHiddenAmount(id: string, raw: string) {
+    if (raw === "") {
+      if (isDraftId(id)) {
+        updateHiddenDraft(id, { amountCents: null });
+      } else {
+        setFieldError(id, "amountCents", "Betrag angeben");
+      }
+      return;
+    }
+    const cents = parseEuroInput(raw);
+    if (cents === null || cents <= 0) {
+      setFieldError(id, "amountCents", "Ungültiger Betrag, z. B. 486,50");
+      return;
+    }
+    clearFieldError(id, "amountCents");
+    if (isDraftId(id)) {
+      updateHiddenDraft(id, { amountCents: cents });
+    } else {
+      void saveHiddenPatch(id, { amountCents: cents });
+    }
+  }
+
+  async function saveHiddenPatch(id: string, patch: api.HiddenEntryPatch) {
+    const entry = hiddenEntriesRef.current.find((item) => item.id === id);
+    if (!entry) {
+      return;
+    }
+    const fields = Object.keys(patch);
+    for (const field of fields) {
+      clearFieldError(id, field);
+    }
+    const unchanged = fields.every(
+      (field) =>
+        entry[field as keyof api.HiddenEntryPatch] === patch[field as keyof api.HiddenEntryPatch],
+    );
+    if (unchanged) {
+      return;
+    }
+    const previous = entry;
+    setHiddenEntries((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+    try {
+      const saved = await api.updateHiddenEntry(id, patch);
+      setHiddenEntries((prev) => prev.map((item) => (item.id === id ? saved : item)));
+    } catch (err) {
+      const apiErr = toApiError(err);
+      setHiddenEntries((prev) => prev.map((item) => (item.id === id ? previous : item)));
+      setFieldError(id, apiErr.field ?? fields[0] ?? "name", apiErr.message);
+    }
+  }
+
+  function archiveHiddenEntry(id: string) {
+    if (isDraftId(id)) {
+      setHiddenDrafts((prev) => prev.filter((entry) => entry.draftId !== id));
+      clearFieldError(id);
+      return;
+    }
+    void archiveStoredHiddenEntry(id);
+  }
+
+  async function archiveStoredHiddenEntry(id: string) {
+    const entry = hiddenEntriesRef.current.find((item) => item.id === id);
+    if (!entry) {
+      return;
+    }
+    const previousList = hiddenEntriesRef.current;
+    setHiddenEntries((prev) => prev.filter((item) => item.id !== id));
+    try {
+      await api.archiveHiddenEntry(id);
+      const name = entry.name || "Eintrag";
+      showUndo(`${name} archiviert`, () => {
+        setUndoState(null);
+        void undoArchiveHiddenEntry(id);
+      });
+    } catch (err) {
+      setHiddenEntries(previousList);
+      showNotice(toApiError(err).message);
+    }
+  }
+
+  async function undoArchiveHiddenEntry(id: string) {
+    try {
+      await api.restoreHiddenEntry(id);
+      setHiddenEntries(await api.listHiddenEntries());
+    } catch (err) {
+      showNotice(toApiError(err).message);
+    }
+  }
+
+  // ---------- Backup und Wiederherstellung ----------
+
   function handleBackup() {
-    // Echte Backup-Logik folgt in einem späteren Schritt.
+    return api.createBackup();
+  }
+
+  function handlePrepareRestore() {
+    return api.prepareRestore();
+  }
+
+  async function handleConfirmRestore() {
+    await api.confirmRestore();
+    // Die Datenbank wurde ersetzt: alles neu laden, Entwürfe verwerfen.
+    setVehicleDrafts([]);
+    setPaymentDrafts([]);
+    setHiddenDrafts([]);
+    setFieldErrors({});
+    setUndoState(null);
+    const [vehicleList, paymentList] = await Promise.all([
+      api.listVehicles(),
+      api.listOpenPayments(),
+    ]);
+    setVehicles(vehicleList);
+    setPayments(paymentList);
+    if (hiddenOpenRef.current) {
+      await loadHiddenArea();
+    }
+  }
+
+  function handleCancelRestore() {
+    return api.cancelRestore();
   }
 
   return (
@@ -593,7 +841,11 @@ export default function App() {
           search={search}
           onSearchChange={setSearch}
           onAddVehicle={addVehicle}
+          onOpenHiddenArea={openHiddenArea}
           onBackup={handleBackup}
+          onPrepareRestore={handlePrepareRestore}
+          onConfirmRestore={handleConfirmRestore}
+          onCancelRestore={handleCancelRestore}
           searchRef={searchRef}
         />
       }
@@ -612,17 +864,37 @@ export default function App() {
           onMove={moveVehicle}
         />
       </section>
-      <PaymentsPanel
-        payments={payments}
-        drafts={paymentDrafts}
-        autoFocusId={autoFocusId}
-        fieldErrors={fieldErrors}
-        onAdd={addPayment}
-        onCommitText={commitPaymentText}
-        onCommitAmount={commitPaymentAmount}
-        onMarkPaid={markPaymentPaid}
-        onDraftRowLeave={handlePaymentDraftRowLeave}
-      />
+      {/* Geschlossen nutzt der Zahlungsbereich die volle Breite; geöffnet
+          teilt sich der untere Bereich in Zahlungen (links) und versteckte
+          Einträge (rechts). */}
+      <div className={hiddenOpen ? "bottom-area is-split" : "bottom-area"}>
+        <PaymentsPanel
+          payments={payments}
+          drafts={paymentDrafts}
+          autoFocusId={autoFocusId}
+          fieldErrors={fieldErrors}
+          onAdd={addPayment}
+          onCommitText={commitPaymentText}
+          onCommitAmount={commitPaymentAmount}
+          onMarkPaid={markPaymentPaid}
+          onDraftRowLeave={handlePaymentDraftRowLeave}
+        />
+        {hiddenOpen && (
+          <HiddenPanel
+            status={hiddenStatus}
+            entries={hiddenEntries}
+            drafts={hiddenDrafts}
+            autoFocusId={autoFocusId}
+            fieldErrors={fieldErrors}
+            onAdd={addHiddenEntry}
+            onCommitText={commitHiddenText}
+            onCommitAmount={commitHiddenAmount}
+            onArchive={archiveHiddenEntry}
+            onDraftRowLeave={handleHiddenDraftRowLeave}
+            onClose={closeHiddenArea}
+          />
+        )}
+      </div>
       {notice !== null && (
         <div key={notice.id} className="error-notice" role="alert">
           {notice.message}

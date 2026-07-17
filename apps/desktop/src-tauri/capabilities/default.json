@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Standardberechtigungen für das Hauptfenster",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }

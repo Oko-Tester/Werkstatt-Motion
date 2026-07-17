@@ -9,7 +9,15 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 uuid = { version = "1", features = ["v4"] }
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+zeroize = { version = "1", features = ["derive"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "vendored"] }
+base64 = "0.22"
+sha2 = "0.10"
+hkdf = "0.12"
+tempfile = "3"

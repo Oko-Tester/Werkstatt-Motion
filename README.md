@@ -31,20 +31,26 @@ vollständig offline.
         │   ├── api.ts         einzige Brücke zu den Tauri-Commands
         │   ├── money.ts       Cent-basierte Beträge, Euroformat, Parser
         │   ├── types.ts       Vehicle-, Payment- und Entwurfs-Typen
+        │   ├── useLongPress.ts Long-Press-Erkennung (ohne Fortschrittsanzeige)
         │   ├── styles/
         │   │   ├── tokens.css Design-Tokens (Farben, Abstände, Höhen …)
         │   │   └── app.css    Komponenten-Styles
         │   ├── components/    AppShell, Header, SearchInput, PrimaryButton,
         │   │                  InlineTextField, InlineMoneyField, StatusToggle,
-        │   │                  VehicleTable, VehicleRow, PaymentsPanel, UndoBar
+        │   │                  VehicleTable, VehicleRow, PaymentsPanel,
+        │   │                  HiddenPanel, UndoBar
         │   └── test/          Testing-Library-Setup + Fake-Backend (mockIPC)
         └── src-tauri/         Tauri 2 (Rust)
             └── src/
-                ├── main.rs      Setup: DB öffnen, Migrationen, Commands
+                ├── main.rs      Setup: DB, Migrationen, Schlüssel, Commands
                 ├── db.rs        Migrationen + Repository (inkl. Tests)
-                ├── commands.rs  Tauri-Commands
-                ├── models.rs    Vehicle, Payment, Eingabe-Typen
-                └── error.rs     strukturierte Fehler fürs Frontend
+                ├── commands.rs  Tauri-Commands + App-Zustand (Db, Vault)
+                ├── models.rs    Vehicle, Payment, HiddenEntry, Eingabe-Typen
+                ├── error.rs     strukturierte Fehler fürs Frontend
+                ├── crypto.rs    AEAD-Verschlüsselung (XChaCha20-Poly1305)
+                ├── keys.rs      Master-Key im OS-Schlüsselspeicher (keyring)
+                ├── hidden.rs    Repository der verschlüsselten Einträge
+                └── backup.rs    Backup-Format, Validierung, Wiederherstellung
 ```
 
 ## Skripte (aus dem Repository-Root)
@@ -75,6 +81,102 @@ Voraussetzungen: Node 20+, pnpm 10, Rust (stable) sowie unter Linux die
   (Code, Meldung, betroffenes Feld) zurück und erscheinen direkt am Feld.
 - Geldbeträge werden grundsätzlich als Integer in Cent gespeichert.
 
+## Versteckter Bereich
+
+Das Werkstattlogo in der Kopfzeile öffnet nach **drei Sekunden
+ununterbrochenem Gedrückthalten** (Maus oder Touch) einen versteckten
+Bereich rechts neben den offenen Zahlungen. Während des Haltens erscheint
+bewusst keinerlei Fortschrittsanzeige (kein Ring, kein Balken, kein
+Countdown); Loslassen, `pointercancel` oder Verlassen des Logos bricht ab,
+normales Anklicken hat keine Wirkung. Ein sichtbares X schließt den Bereich
+mit einem Klick – ohne Bestätigungsdialog, ohne Modal, ohne eigene Seite.
+
+Der Bereich bedient sich wie die offenen Zahlungen: „+ Eintrag“ erzeugt
+direkt eine bearbeitbare Zeile (Bezeichnung, Betrag in Cent, Notiz),
+Änderungen speichern automatisch, Archivieren zeigt eine Rückgängig-Leiste.
+
+**Sicherheitshinweis:** Das Gedrückthalten ist versteckte Bedienung, kein
+Zugriffsschutz. Wer die laufende, entsperrte App bedienen kann, kann den
+Bereich öffnen. Die Verschlüsselung schützt kopierte Datenbank- und
+Backup-Dateien.
+
+### Verschlüsselungsformat (Version 1)
+
+- Verfahren: **XChaCha20-Poly1305** (authentifizierte Verschlüsselung, AEAD),
+  implementiert ausschließlich im Rust-Backend (`crypto.rs`).
+- Die fachlichen Inhalte eines Eintrags (Bezeichnung, Betrag, Notiz) werden
+  gemeinsam als JSON-Payload serialisiert und als Ganzes verschlüsselt.
+  Es gibt keine Klartextspalten für diese Felder.
+- Pro Verschlüsselung wird eine frische 24-Byte-Zufallsnonce erzeugt.
+- Die Assoziierten Daten (AAD) binden Eintrags-ID und Formatversion
+  (`werkstatt-hidden:<id>:<version>`); vertauschte oder manipulierte
+  Ciphertexte werden dadurch erkannt und abgelehnt.
+- Die Tabelle `hidden_entries` speichert nur `id`, `encrypted_payload`,
+  `nonce`, `encryption_version`, `created_at`, `updated_at`, `archived_at`.
+- `encryption_version` ist pro Zeile gespeichert, damit spätere
+  Formatwechsel migrierbar sind; unbekannte Versionen werden abgelehnt.
+- Fehlermeldungen und Logs enthalten weder Klartext noch Schlüsselmaterial;
+  entschlüsselte Zwischenpuffer und Schlüssel werden nach Gebrauch
+  überschrieben (`zeroize`).
+
+### Schlüsselverwaltung
+
+- Beim ersten Start erzeugt das Backend einen zufälligen 32-Byte-Master-Key
+  und einen Wiederherstellungscode (128 Bit Zufall) und legt beide im
+  sicheren Schlüsselspeicher des Betriebssystems ab (`keyring`-Crate:
+  Windows Credential Manager, macOS Keychain, Linux Secret Service).
+- Der Schlüssel wird niemals an React übertragen, steht nicht im Quellcode
+  und wird nicht in SQLite gespeichert.
+- Kann der Schlüssel nicht geladen werden, startet die App trotzdem; der
+  versteckte Bereich zeigt einen klaren Fehlerzustand. Existieren bereits
+  verschlüsselte Einträge, wird **niemals** automatisch ein neuer Schlüssel
+  erzeugt – das würde die Daten endgültig unlesbar machen.
+
+### Backupformat
+
+„Backup“ in der Kopfzeile erstellt über den **nativen Speichern-Dialog**
+eine einzelne Datei (`.werkstattbackup`, JSON) mit:
+
+- Manifest: Formatname, Formatversion, App-Version, Datenbank-Schemaversion,
+  Verschlüsselungsversion, Erstellungszeitpunkt
+- der vollständigen SQLite-Datenbank (konsistenter Schnappschuss über die
+  SQLite-Online-Backup-API, Base64) samt SHA-256-Prüfsumme – versteckte
+  Einträge bleiben darin verschlüsselt
+- Schlüsselwiederherstellungsdaten: der Master-Key, verschlüsselt
+  (XChaCha20-Poly1305) mit einem per HKDF-SHA256 aus dem
+  Wiederherstellungscode abgeleiteten Schlüssel (zufälliges Salt pro Backup)
+
+Ein Backup enthält versteckte Daten also niemals im Klartext, und die Datei
+allein genügt nicht, um sie zu lesen.
+
+„Wiederherstellen“ läuft zweistufig inline und braucht zwei Klicks:
+Klick 1 wählt die Datei im nativen Dialog; das Backend validiert Manifest,
+Prüfsumme, Schemaversion (Migration auf einer Kopie) und die Integrität
+aller verschlüsselten Einträge. Klick 2 („Jetzt wiederherstellen“) legt
+zuerst eine automatische Sicherung des aktuellen Zustands im
+App-Datenverzeichnis (`backups/`) an und tauscht die Datenbankdatei dann
+atomar aus. Jeder Fehler vor oder während des Austauschs lässt die
+bestehende Datenbank unverändert.
+
+### Getestete Fehlerfälle
+
+Rust (`cargo test`) und Frontend (Vitest) decken u. a. ab:
+
+- Long-Press unter drei Sekunden öffnet nichts; ab drei Sekunden öffnet
+  genau einmal; `pointercancel`/`pointerleave` brechen ab; keinerlei
+  Fortschrittsanzeige während des Haltens; Schließen über X
+- Ver-/Entschlüsselung inklusive: unterschiedliche Nonces für gleiche
+  Inhalte, manipulierte Ciphertexte/Nonces/AAD werden abgelehnt,
+  vertauschte Payloads zwischen Zeilen werden abgelehnt
+- Klartext erscheint weder in der Datenbankdatei noch in Fehlermeldungen
+- fehlender Schlüssel bei bestehenden Daten erzeugt einen sicheren Fehler
+  (kein neuer Schlüssel); nicht erreichbarer oder korrupter
+  Schlüsselspeicher wird gemeldet, ohne etwas zu überschreiben
+- Backups enthalten keine versteckten Klartextdaten; gültige Backups lassen
+  sich wiederherstellen (auch nur mit Wiederherstellungscode); abgeschnittene,
+  prüfsummen-falsche, inhaltlich manipulierte, format-fremde und zu neue
+  Backups werden abgelehnt, ohne die aktuelle Datenbank zu verändern
+
 ## Design
 
 Alle Gestaltungswerte liegen als CSS-Variablen in
@@ -88,7 +190,7 @@ Alle Gestaltungswerte liegen als CSS-Variablen in
 - interaktive Elemente mindestens 40 px hoch, Tabellenzeilen 52 px
 - sichtbare Fokuszustände, Status immer mit Symbol (nie nur Farbe)
 
-## Bedienung (Stand Schritt 2, SQLite-Daten)
+## Bedienung (Stand Schritt 3)
 
 - Suche filtert die Fahrzeugliste sofort nach Kunde, Fahrzeug und
   Kennzeichen; Strg+F/Cmd+F fokussiert die interne Suche
@@ -112,5 +214,10 @@ Alle Gestaltungswerte liegen als CSS-Variablen in
 - „+ Offener Betrag“ legt eine bearbeitbare Zahlungszeile an (Kunde, Betrag,
   Notiz) mit automatischer Euroformatierung; Beträge wie „486,50“ oder
   „1.234,56“ werden als Cent gespeichert
+- „Backup“ und „Wiederherstellen“ sind direkt in der Kopfzeile sichtbar und
+  nutzen ausschließlich die nativen Dateidialoge des Betriebssystems; die
+  Wiederherstellung wird über eine zweistufige Inline-Aktion bestätigt
+  (siehe „Versteckter Bereich“ und „Backupformat“)
 - Tabellenkopf bleibt beim Scrollen sichtbar; der Zahlungsbereich ist fest
-  unten angeordnet; keine Aktion blockiert die Oberfläche
+  unten angeordnet und nutzt die volle Breite, solange der versteckte
+  Bereich geschlossen ist; keine Aktion blockiert die Oberfläche

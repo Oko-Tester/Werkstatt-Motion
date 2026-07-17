@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ApiError, Payment, Vehicle, VehicleStatusField } from "./types";
+import type {
+  ApiError,
+  HiddenEntry,
+  HiddenStatus,
+  Payment,
+  Vehicle,
+  VehicleStatusField,
+} from "./types";
 
 /**
  * Einzige Stelle, an der das Frontend mit dem Rust-Backend spricht.
@@ -78,6 +85,75 @@ export function markPaymentPaid(id: string): Promise<Payment> {
 
 export function restorePayment(id: string): Promise<Payment> {
   return invoke("restore_payment", { id });
+}
+
+// ---------- Versteckter Bereich ----------
+
+export interface NewHiddenEntryInput {
+  name: string;
+  amountCents: number;
+  note?: string;
+}
+
+export type HiddenEntryPatch = Partial<Pick<HiddenEntry, "name" | "amountCents" | "note">>;
+
+export function hiddenStatus(): Promise<HiddenStatus> {
+  return invoke("hidden_status");
+}
+
+export function listHiddenEntries(): Promise<HiddenEntry[]> {
+  return invoke("list_hidden_entries");
+}
+
+export function createHiddenEntry(input: NewHiddenEntryInput): Promise<HiddenEntry> {
+  return invoke("create_hidden_entry", { input });
+}
+
+export function updateHiddenEntry(id: string, patch: HiddenEntryPatch): Promise<HiddenEntry> {
+  return invoke("update_hidden_entry", { id, patch });
+}
+
+export function archiveHiddenEntry(id: string): Promise<HiddenEntry> {
+  return invoke("archive_hidden_entry", { id });
+}
+
+export function restoreHiddenEntry(id: string): Promise<HiddenEntry> {
+  return invoke("restore_hidden_entry", { id });
+}
+
+// ---------- Backup und Wiederherstellung ----------
+
+export interface BackupResult {
+  saved: boolean;
+  path: string | null;
+}
+
+export interface RestorePreview {
+  cancelled: boolean;
+  createdAt: string | null;
+  fileName: string | null;
+  vehicleCount: number | null;
+  paymentCount: number | null;
+  hiddenCount: number | null;
+}
+
+/** Öffnet den nativen Speichern-Dialog und schreibt die Backup-Datei. */
+export function createBackup(): Promise<BackupResult> {
+  return invoke("create_backup");
+}
+
+/** Öffnet den nativen Datei-Dialog und validiert das gewählte Backup. */
+export function prepareRestore(): Promise<RestorePreview> {
+  return invoke("prepare_restore");
+}
+
+/** Führt die zuvor validierte Wiederherstellung aus. */
+export function confirmRestore(): Promise<void> {
+  return invoke("confirm_restore");
+}
+
+export function cancelRestore(): Promise<void> {
+  return invoke("cancel_restore");
 }
 
 /** Macht aus einem unbekannten Fehler einen anzeigbaren ApiError. */

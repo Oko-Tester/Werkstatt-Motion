@@ -37,9 +37,47 @@ export type PaymentTextField = "customerName" | "note";
 
 /** Strukturierter Fehler aus dem Rust-Backend. */
 export interface ApiError {
-  code: "validation" | "not_found" | "database";
+  code:
+    | "validation"
+    | "not_found"
+    | "database"
+    | "crypto"
+    | "key_missing"
+    | "keystore_unavailable"
+    | "backup";
   message: string;
   field?: string;
+}
+
+/**
+ * Versteckter Eintrag, wie ihn das Rust-Backend entschlüsselt liefert.
+ * In SQLite liegen Name, Betrag und Notiz ausschließlich verschlüsselt.
+ */
+export interface HiddenEntry {
+  id: string;
+  name: string;
+  amountCents: number;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+/** Neue, noch nicht gespeicherte Zeile im versteckten Bereich. */
+export interface HiddenEntryDraft {
+  draftId: string;
+  name: string;
+  amountCents: number | null;
+  note: string;
+}
+
+/** Direkt bearbeitbare Textfelder eines versteckten Eintrags. */
+export type HiddenTextField = "name" | "note";
+
+/** Zustand des versteckten Bereichs (Schlüssel geladen oder Fehlerzustand). */
+export interface HiddenStatus {
+  unlocked: boolean;
+  error?: ApiError;
 }
 
 /**
