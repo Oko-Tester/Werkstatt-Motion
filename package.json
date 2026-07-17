@@ -1,0 +1,12 @@
+{
+  "name": "werkstatt-manager",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "pnpm --filter @werkstatt/desktop dev",
+    "build": "pnpm --filter @werkstatt/desktop build",
+    "check": "pnpm --filter @werkstatt/desktop check",
+    "test": "pnpm --filter @werkstatt/desktop test"
+  }
+}

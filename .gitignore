@@ -1,0 +1,11 @@
+# Abhängigkeiten
+node_modules/
+
+# Build-Ausgaben
+dist/
+target/
+apps/desktop/src-tauri/gen/
+
+# Verschiedenes
+*.log
+.DS_Store
