@@ -1,19 +1,69 @@
+/** Fahrzeug, wie es das Rust-Backend liefert (SQLite). */
 export interface Vehicle {
   id: string;
-  kunde: string;
-  fahrzeug: string;
-  kennzeichen: string;
-  tuevNoetig: boolean;
-  teileBestellt: boolean;
-  teileAngekommen: boolean;
-  fertig: boolean;
-  archiviert: boolean;
+  customerName: string;
+  vehicleName: string;
+  licensePlate: string;
+  tuvRequired: boolean;
+  partsOrdered: boolean;
+  partsArrived: boolean;
+  isDone: boolean;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
 }
 
+/** Offene Zahlung. Beträge grundsätzlich als Integer in Cent. */
 export interface Payment {
   id: string;
-  kunde: string;
-  fahrzeug: string;
-  betragCents: number;
-  bezahlt: boolean;
+  customerName: string;
+  amountCents: number;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+  paidAt: string | null;
+  archivedAt: string | null;
 }
+
+/** Statusfelder, die per Ein-Klick umgeschaltet werden. */
+export type VehicleStatusField = "tuvRequired" | "partsOrdered" | "partsArrived" | "isDone";
+
+/** Direkt bearbeitbare Textfelder eines Fahrzeugs. */
+export type VehicleTextField = "customerName" | "vehicleName" | "licensePlate";
+
+/** Direkt bearbeitbare Textfelder einer Zahlung. */
+export type PaymentTextField = "customerName" | "note";
+
+/** Strukturierter Fehler aus dem Rust-Backend. */
+export interface ApiError {
+  code: "validation" | "not_found" | "database";
+  message: string;
+  field?: string;
+}
+
+/**
+ * Neue, noch nicht gespeicherte Fahrzeugzeile. Sie lebt nur im Frontend,
+ * bis die Pflichtfelder (Kunde und Fahrzeug oder Kennzeichen) gefüllt sind.
+ */
+export interface VehicleDraft {
+  draftId: string;
+  customerName: string;
+  vehicleName: string;
+  licensePlate: string;
+  tuvRequired: boolean;
+  partsOrdered: boolean;
+  partsArrived: boolean;
+  isDone: boolean;
+}
+
+/** Neue, noch nicht gespeicherte Zahlungszeile. */
+export interface PaymentDraft {
+  draftId: string;
+  customerName: string;
+  amountCents: number | null;
+  note: string;
+}
+
+/** Fehlermeldungen je Zeile und Feld, direkt am Eingabefeld angezeigt. */
+export type FieldErrors = Record<string, Record<string, string>>;

@@ -1,16 +1,34 @@
 import { useState } from "react";
-import type { DragEvent, KeyboardEvent } from "react";
-import type { Vehicle } from "../types";
+import type { DragEvent, FocusEvent, KeyboardEvent } from "react";
+import type { VehicleStatusField, VehicleTextField } from "../types";
 import { InlineTextField } from "./InlineTextField";
 import { StatusToggle } from "./StatusToggle";
 
+/** Gemeinsame Sicht auf gespeicherte Fahrzeuge und Entwurfszeilen. */
+export interface VehicleRowData {
+  id: string;
+  customerName: string;
+  vehicleName: string;
+  licensePlate: string;
+  tuvRequired: boolean;
+  partsOrdered: boolean;
+  partsArrived: boolean;
+  isDone: boolean;
+}
+
 interface VehicleRowProps {
-  vehicle: Vehicle;
+  vehicle: VehicleRowData;
+  /** Entwurfszeilen sind noch nicht gespeichert und nicht sortierbar. */
+  isDraft: boolean;
   autoFocus: boolean;
   isDragging: boolean;
   isDropTarget: boolean;
-  onUpdate: (id: string, patch: Partial<Vehicle>) => void;
+  errors?: Record<string, string>;
+  onCommitText: (id: string, field: VehicleTextField, value: string) => void;
+  onToggleStatus: (id: string, field: VehicleStatusField, value: boolean) => void;
   onArchive: (id: string) => void;
+  /** Wird gerufen, wenn der Fokus die Zeile komplett verlässt. */
+  onRowLeave?: (id: string) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onDragOver: () => void;
@@ -21,11 +39,15 @@ interface VehicleRowProps {
 
 export function VehicleRow({
   vehicle,
+  isDraft,
   autoFocus,
   isDragging,
   isDropTarget,
-  onUpdate,
+  errors,
+  onCommitText,
+  onToggleStatus,
   onArchive,
+  onRowLeave,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -35,11 +57,11 @@ export function VehicleRow({
 }: VehicleRowProps) {
   // Ziehen ist nur über den Griff möglich, nicht über die ganze Zeile.
   const [dragEnabled, setDragEnabled] = useState(false);
-  const rowName = vehicle.kennzeichen || vehicle.kunde || "Neues Fahrzeug";
+  const rowName = vehicle.licensePlate || vehicle.customerName || "Neues Fahrzeug";
 
   const rowClassName = [
     "vehicle-row",
-    vehicle.fertig ? "is-fertig" : "",
+    vehicle.isDone ? "is-fertig" : "",
     isDragging ? "is-dragging" : "",
     isDropTarget ? "is-drop-target" : "",
   ]
@@ -57,15 +79,25 @@ export function VehicleRow({
   }
 
   function handleDragOver(event: DragEvent<HTMLTableRowElement>) {
+    if (isDraft) {
+      return;
+    }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     onDragOver();
+  }
+
+  function handleRowBlur(event: FocusEvent<HTMLTableRowElement>) {
+    if (onRowLeave && !event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      onRowLeave(vehicle.id);
+    }
   }
 
   return (
     <tr
       className={rowClassName}
       draggable={dragEnabled}
+      onBlur={handleRowBlur}
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
         onDragStart();
@@ -76,92 +108,100 @@ export function VehicleRow({
       }}
       onDragOver={handleDragOver}
       onDrop={(event) => {
+        if (isDraft) {
+          return;
+        }
         event.preventDefault();
         onDrop();
       }}
     >
       <td className="cell-drag">
-        <button
-          type="button"
-          className="drag-handle"
-          aria-label={`Priorität von ${rowName} ändern`}
-          title="Ziehen oder Pfeiltasten: Priorität ändern"
-          onMouseDown={() => setDragEnabled(true)}
-          onMouseUp={() => setDragEnabled(false)}
-          onKeyDown={handleHandleKeyDown}
-        >
-          <svg
-            aria-hidden="true"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            stroke="none"
+        {!isDraft && (
+          <button
+            type="button"
+            className="drag-handle"
+            aria-label={`Priorität von ${rowName} ändern`}
+            title="Ziehen oder Pfeiltasten: Priorität ändern"
+            onMouseDown={() => setDragEnabled(true)}
+            onMouseUp={() => setDragEnabled(false)}
+            onKeyDown={handleHandleKeyDown}
           >
-            <circle cx="9" cy="5" r="1.5" />
-            <circle cx="9" cy="12" r="1.5" />
-            <circle cx="9" cy="19" r="1.5" />
-            <circle cx="15" cy="5" r="1.5" />
-            <circle cx="15" cy="12" r="1.5" />
-            <circle cx="15" cy="19" r="1.5" />
-          </svg>
-        </button>
+            <svg
+              aria-hidden="true"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="none"
+            >
+              <circle cx="9" cy="5" r="1.5" />
+              <circle cx="9" cy="12" r="1.5" />
+              <circle cx="9" cy="19" r="1.5" />
+              <circle cx="15" cy="5" r="1.5" />
+              <circle cx="15" cy="12" r="1.5" />
+              <circle cx="15" cy="19" r="1.5" />
+            </svg>
+          </button>
+        )}
       </td>
       <td>
         <InlineTextField
-          value={vehicle.kunde}
+          value={vehicle.customerName}
           label="Kunde"
           placeholder="Kunde"
           autoFocus={autoFocus}
-          onCommit={(kunde) => onUpdate(vehicle.id, { kunde })}
+          error={errors?.customerName}
+          onCommit={(value) => onCommitText(vehicle.id, "customerName", value)}
         />
       </td>
       <td>
         <InlineTextField
-          value={vehicle.fahrzeug}
+          value={vehicle.vehicleName}
           label="Fahrzeug"
           placeholder="Fahrzeug"
-          onCommit={(fahrzeug) => onUpdate(vehicle.id, { fahrzeug })}
+          error={errors?.vehicleName}
+          onCommit={(value) => onCommitText(vehicle.id, "vehicleName", value)}
         />
       </td>
       <td>
         <InlineTextField
-          value={vehicle.kennzeichen}
+          value={vehicle.licensePlate}
           label="Kennzeichen"
           placeholder="Kennzeichen"
-          onCommit={(kennzeichen) => onUpdate(vehicle.id, { kennzeichen })}
+          error={errors?.licensePlate}
+          onCommit={(value) => onCommitText(vehicle.id, "licensePlate", value)}
         />
       </td>
       <td className="cell-center">
         <StatusToggle
-          checked={vehicle.tuevNoetig}
+          checked={vehicle.tuvRequired}
           tone="attention"
           label={`TÜV nötig (${rowName})`}
-          onChange={(tuevNoetig) => onUpdate(vehicle.id, { tuevNoetig })}
+          onChange={(value) => onToggleStatus(vehicle.id, "tuvRequired", value)}
         />
       </td>
       <td className="cell-center">
         <StatusToggle
-          checked={vehicle.teileBestellt}
+          checked={vehicle.partsOrdered}
           tone="primary"
           label={`Teile bestellt (${rowName})`}
-          onChange={(teileBestellt) => onUpdate(vehicle.id, { teileBestellt })}
+          onChange={(value) => onToggleStatus(vehicle.id, "partsOrdered", value)}
         />
       </td>
       <td className="cell-center">
         <StatusToggle
-          checked={vehicle.teileAngekommen}
+          checked={vehicle.partsArrived}
           tone="primary"
           label={`Teile angekommen (${rowName})`}
-          onChange={(teileAngekommen) => onUpdate(vehicle.id, { teileAngekommen })}
+          onChange={(value) => onToggleStatus(vehicle.id, "partsArrived", value)}
         />
       </td>
       <td className="cell-center">
         <StatusToggle
-          checked={vehicle.fertig}
+          checked={vehicle.isDone}
           tone="success"
           label={`Fertig (${rowName})`}
-          onChange={(fertig) => onUpdate(vehicle.id, { fertig })}
+          onChange={(value) => onToggleStatus(vehicle.id, "isDone", value)}
         />
       </td>
       <td className="cell-archive">
@@ -169,7 +209,7 @@ export function VehicleRow({
           type="button"
           className="icon-button"
           aria-label={`${rowName} archivieren`}
-          title="Archivieren"
+          title={isDraft ? "Zeile verwerfen" : "Archivieren"}
           onClick={() => onArchive(vehicle.id)}
         >
           <svg
