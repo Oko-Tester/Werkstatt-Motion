@@ -429,6 +429,29 @@ mod tests {
     }
 
     #[test]
+    fn fuenfhundert_verschluesselte_eintraege_bleiben_schnell_lesbar() {
+        // Zielgröße aus den Abnahmekriterien: 500 verschlüsselte Einträge.
+        let conn = test_conn();
+        let key = SecretKey::generate();
+        for index in 0..500 {
+            create_entry(
+                &conn,
+                &key,
+                input(&format!("Eintrag {index}"), 100 + index as i64, ""),
+            )
+            .unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        assert_eq!(list_entries(&conn, &key).unwrap().len(), 500);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "Entschlüsseltes Auflisten dauert zu lange: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
     fn falscher_schluessel_liest_nichts() {
         let conn = test_conn();
         let key = SecretKey::generate();

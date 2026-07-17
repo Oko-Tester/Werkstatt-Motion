@@ -99,6 +99,11 @@ impl std::error::Error for ApiError {}
 
 impl From<rusqlite::Error> for ApiError {
     fn from(err: rusqlite::Error) -> Self {
-        ApiError::database(&format!("Datenbankfehler: {err}"))
+        // Rohe SQLite-Meldungen gehören nicht in die Oberfläche. Details nur
+        // auf stderr im Debug-Build – nie in Logs oder Meldungen im Release.
+        #[cfg(debug_assertions)]
+        eprintln!("SQLite-Fehler: {err}");
+        let _ = &err;
+        ApiError::database("Die Datenbank konnte nicht gelesen oder beschrieben werden")
     }
 }

@@ -213,24 +213,35 @@ pub fn validate_backup_bytes(
 
         // Integrität der verschlüsselten Inhalte: erst mit dem aktuellen
         // Schlüssel, sonst mit dem im Backup geschützten Schlüssel.
+        let total_hidden = count("SELECT COUNT(*) FROM hidden_entries")?;
         let mut chosen: Option<(SecretKey, bool)> = None;
         if let Some(key) = current_key {
-            if hidden::verify_all(&conn, key).is_ok() {
+            if total_hidden == 0 || hidden::verify_all(&conn, key).is_ok() {
                 chosen = Some((key.clone(), false));
             }
         }
         if chosen.is_none() {
             if let Some(code) = recovery_code {
                 if let Ok(unwrapped) = unwrap_master_key(&file.key_recovery, code) {
-                    if hidden::verify_all(&conn, &unwrapped).is_ok() {
+                    if total_hidden == 0 || hidden::verify_all(&conn, &unwrapped).is_ok() {
                         let changed = current_key.map(|key| *key != unwrapped).unwrap_or(true);
                         chosen = Some((unwrapped, changed));
                     }
                 }
             }
         }
+        if chosen.is_none() && total_hidden == 0 {
+            // Backup ohne verschlüsselte Einträge: auch ohne Schlüssel und
+            // Wiederherstellungscode nutzbar (Reparaturweg). Ein frischer
+            // Schlüssel ist hier gefahrlos, weil nichts damit gelesen werden muss.
+            chosen = Some((SecretKey::generate(), true));
+        }
         let (master_key, key_changed) = chosen.ok_or_else(|| {
-            ApiError::backup("Verschlüsselte Einträge im Backup können nicht gelesen werden")
+            ApiError::backup(
+                "Verschlüsselte Einträge im Backup können nicht gelesen werden. \
+                 Ohne passenden Schlüssel oder Wiederherstellungscode ist dieses \
+                 Backup nicht nutzbar.",
+            )
         })?;
         let hidden_count = count("SELECT COUNT(*) FROM hidden_entries WHERE archived_at IS NULL")?;
         (master_key, key_changed, vehicle_count, payment_count, hidden_count)
@@ -254,31 +265,28 @@ pub fn validate_backup_bytes(
 /// Tauscht die Datenbankdatei atomar gegen die validierten Bytes aus und
 /// öffnet die Verbindung neu. Schlägt der Austausch fehl, bleibt die alte
 /// Datei bestehen und die Verbindung zeigt wieder auf die alte Datenbank.
+/// Der Slot darf leer sein (defekte Datenbank) – dann ist der Austausch der
+/// Reparaturweg und es gibt keine alte Verbindung zu schließen.
 pub fn swap_database(
-    conn: &mut Connection,
+    slot: &mut Option<Connection>,
     db_path: &Path,
     db_bytes: &[u8],
 ) -> Result<(), ApiError> {
     let tmp_path = sibling(db_path, ".restore-neu");
     std::fs::write(&tmp_path, db_bytes).map_err(|_| io_error())?;
 
-    let reopen = |conn: &mut Connection| -> Result<(), ApiError> {
-        let mut fresh = Connection::open(db_path)?;
-        fresh.pragma_update(None, "journal_mode", "WAL")?;
-        fresh.pragma_update(None, "foreign_keys", "ON")?;
-        db::migrate(&mut fresh)?;
-        *conn = fresh;
+    let reopen = |slot: &mut Option<Connection>| -> Result<(), ApiError> {
+        *slot = Some(db::open(db_path)?);
         Ok(())
     };
 
     // Alte Verbindung schließen, damit die Datei ersetzt werden kann.
-    let old = std::mem::replace(conn, Connection::open_in_memory()?);
-    drop(old);
+    drop(slot.take());
 
-    if let Err(_) = std::fs::rename(&tmp_path, db_path) {
+    if std::fs::rename(&tmp_path, db_path).is_err() {
         let _ = std::fs::remove_file(&tmp_path);
-        // Alte Datei ist unangetastet – Verbindung wieder öffnen.
-        reopen(conn)?;
+        // Alte Datei ist unangetastet – Verbindung wieder öffnen (best effort).
+        let _ = reopen(slot);
         return Err(ApiError::backup("Wiederherstellung konnte nicht abgeschlossen werden"));
     }
 
@@ -286,7 +294,21 @@ pub fn swap_database(
     let _ = std::fs::remove_file(sibling(db_path, "-wal"));
     let _ = std::fs::remove_file(sibling(db_path, "-shm"));
 
-    reopen(conn)
+    reopen(slot)
+}
+
+/// Legt eine nicht mehr lesbare Datenbankdatei vor der Wiederherstellung
+/// als Kopie ins Backup-Verzeichnis (best effort – blockiert nie).
+pub fn preserve_broken_database(db_path: &Path, backups_dir: &Path) {
+    if !db_path.exists() || std::fs::create_dir_all(backups_dir).is_err() {
+        return;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let target = backups_dir.join(format!("defekte-datenbank-{stamp}.db"));
+    let _ = std::fs::copy(db_path, target);
 }
 
 /// Schreibt vor einer Wiederherstellung eine automatische Sicherung des
@@ -423,14 +445,69 @@ mod tests {
 
         // In eine andere, leere Datenbank einspielen.
         let target_path = dir.path().join("ziel.db");
-        let mut target = open_db(&target_path);
-        swap_database(&mut target, &target_path, &validated.db_bytes).unwrap();
+        let mut slot = Some(open_db(&target_path));
+        swap_database(&mut slot, &target_path, &validated.db_bytes).unwrap();
+        let target = slot.expect("Verbindung nach dem Austausch");
 
         let entries = hidden::list_entries(&target, &validated.master_key).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, MARKER_NAME);
         assert_eq!(db::list_vehicles(&target).unwrap().len(), 1);
         assert_eq!(db::list_open_payments(&target).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn wiederherstellung_funktioniert_ohne_nutzbare_datenbank() {
+        // Reparaturweg: Die aktuelle Datenbankdatei ist defekt, es gibt keine
+        // offene Verbindung – die Wiederherstellung tauscht die Datei trotzdem.
+        let dir = tempfile::tempdir().unwrap();
+        let keys = test_keys();
+        let source = open_db(&dir.path().join("quelle.db"));
+        seed(&source, &keys);
+        let backup = create_backup_bytes(&source, &keys).unwrap();
+        let validated =
+            validate_backup_bytes(&backup, None, Some(&keys.master_key), None).unwrap();
+
+        let db_path = dir.path().join("defekt.db");
+        std::fs::write(&db_path, b"kein sqlite").unwrap();
+        // Die defekte Datei wird vorher beiseitegelegt.
+        let backups_dir = dir.path().join("backups");
+        preserve_broken_database(&db_path, &backups_dir);
+        let preserved: Vec<_> = std::fs::read_dir(&backups_dir).unwrap().collect();
+        assert_eq!(preserved.len(), 1);
+
+        let mut slot: Option<Connection> = None;
+        swap_database(&mut slot, &db_path, &validated.db_bytes).unwrap();
+        let conn = slot.expect("Verbindung nach dem Austausch");
+        assert_eq!(db::list_vehicles(&conn).unwrap().len(), 1);
+        assert_eq!(
+            hidden::list_entries(&conn, &validated.master_key).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn backup_ohne_versteckte_eintraege_braucht_keinen_schluessel() {
+        // Reparaturweg: Schlüssel verloren, Backup enthält nichts
+        // Verschlüsseltes – die Validierung darf nicht daran scheitern.
+        let dir = tempfile::tempdir().unwrap();
+        let keys = test_keys();
+        let conn = open_db(&dir.path().join("a.db"));
+        db::create_vehicle(
+            &conn,
+            crate::models::NewVehicle {
+                customer_name: "Huber".to_string(),
+                vehicle_name: "Golf".to_string(),
+                ..crate::models::NewVehicle::default()
+            },
+        )
+        .unwrap();
+        let backup = create_backup_bytes(&conn, &keys).unwrap();
+
+        let validated = validate_backup_bytes(&backup, None, None, None).unwrap();
+        assert!(validated.key_changed);
+        assert_eq!(validated.vehicle_count, 1);
+        assert_eq!(validated.hidden_count, 0);
     }
 
     #[test]

@@ -36,6 +36,10 @@ export function InlineMoneyField({ cents, label, onCommit, error }: InlineMoneyF
       focusNextField(event.currentTarget);
     } else if (event.key === "Escape") {
       setDraft(null);
+      if (error !== undefined) {
+        // Alten (gültigen) Wert bestätigen, damit der Feldfehler verschwindet.
+        onCommit(centsToEditable(cents));
+      }
     }
   }
 
