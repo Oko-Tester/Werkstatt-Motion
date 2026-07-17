@@ -1,9 +1,12 @@
+import type { Ref } from "react";
+
 interface SearchInputProps {
   value: string;
   onChange: (value: string) => void;
+  inputRef?: Ref<HTMLInputElement>;
 }
 
-export function SearchInput({ value, onChange }: SearchInputProps) {
+export function SearchInput({ value, onChange, inputRef }: SearchInputProps) {
   return (
     <div className="search-input">
       <svg
@@ -22,6 +25,7 @@ export function SearchInput({ value, onChange }: SearchInputProps) {
         <path d="m21 21-4.3-4.3" />
       </svg>
       <input
+        ref={inputRef}
         type="search"
         value={value}
         onChange={(event) => onChange(event.target.value)}

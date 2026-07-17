@@ -9,10 +9,12 @@
     "dev:vite": "vite",
     "build:vite": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && pnpm test:rust",
+    "test:rust": "vite build && cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.4.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

@@ -35,4 +35,13 @@ describe("InlineTextField", () => {
     await user.tab();
     expect(onCommit).toHaveBeenCalledWith("Altus");
   });
+
+  it("zeigt Fehler direkt am Feld an", () => {
+    render(
+      <InlineTextField value="" label="Kunde" onCommit={() => undefined} error="Kunde angeben" />,
+    );
+    const input = screen.getByRole("textbox", { name: "Kunde" });
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent("Kunde angeben");
+  });
 });

@@ -327,6 +327,10 @@ input {
 
 /* ---------- Direktbearbeitung ---------- */
 
+.inline-field-wrap {
+  min-width: 0;
+}
+
 .inline-field {
   width: 100%;
   height: var(--control-height);
@@ -349,6 +353,28 @@ input {
 
 .inline-field::placeholder {
   color: var(--color-text-muted);
+}
+
+.inline-field-money {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fehler erscheinen direkt am betroffenen Feld. */
+.inline-field.has-error {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-soft);
+}
+
+.inline-field.has-error:focus {
+  border-color: var(--color-danger);
+}
+
+.field-error {
+  display: block;
+  padding: 2px var(--space-1) 4px;
+  font-size: var(--font-size-caption);
+  color: var(--color-danger);
 }
 
 /* ---------- Status-Umschalter ---------- */
@@ -408,8 +434,7 @@ input {
 
 .payments-header {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: var(--space-2);
 }
 
@@ -420,6 +445,7 @@ input {
 }
 
 .payments-total {
+  margin-left: auto;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -434,7 +460,7 @@ input {
 
 .payment-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(140px, 1.4fr) 110px auto;
+  grid-template-columns: minmax(160px, 1fr) 150px minmax(180px, 1.6fr) auto;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--row-height);
@@ -445,29 +471,31 @@ input {
   border-top: none;
 }
 
-.payment-kunde {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.payment-fahrzeug {
+.payment-draft-hint {
   color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: var(--font-size-caption);
   white-space: nowrap;
-}
-
-.payment-betrag {
-  text-align: right;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
 }
 
 .payments-empty {
   margin: 0;
   color: var(--color-text-muted);
+}
+
+/* ---------- Fehlerhinweis (nicht blockierend) ---------- */
+
+.error-notice {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: 480px;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-danger);
 }
 
 /* ---------- Rückgängig-Leiste ---------- */

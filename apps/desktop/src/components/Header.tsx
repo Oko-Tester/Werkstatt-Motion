@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { Ref } from "react";
 import { PrimaryButton } from "./PrimaryButton";
 import { SearchInput } from "./SearchInput";
 
@@ -7,11 +8,12 @@ interface HeaderProps {
   onSearchChange: (value: string) => void;
   onAddVehicle: () => void;
   onBackup: () => void;
+  searchRef?: Ref<HTMLInputElement>;
 }
 
 const BACKUP_STATUS_MS = 4000;
 
-export function Header({ search, onSearchChange, onAddVehicle, onBackup }: HeaderProps) {
+export function Header({ search, onSearchChange, onAddVehicle, onBackup, searchRef }: HeaderProps) {
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
@@ -52,7 +54,7 @@ export function Header({ search, onSearchChange, onAddVehicle, onBackup }: Heade
       </div>
       <h1 className="app-title">Werkstatt Manager</h1>
       <div className="header-search">
-        <SearchInput value={search} onChange={onSearchChange} />
+        <SearchInput value={search} onChange={onSearchChange} inputRef={searchRef} />
       </div>
       <div className="header-actions">
         <span className="backup-status" role="status">
