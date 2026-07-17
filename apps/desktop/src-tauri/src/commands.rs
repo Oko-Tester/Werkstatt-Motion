@@ -17,11 +17,37 @@ use crate::models::{
     Vehicle, VehiclePatch, VehicleStatusField,
 };
 
+/// Datenbankzustand: Die App startet auch, wenn die Datenbank nicht geöffnet
+/// oder migriert werden konnte – Commands liefern dann den gespeicherten
+/// Fehler, und eine Wiederherstellung aus einem Backup bleibt möglich.
+pub struct DbState {
+    pub conn: Option<Connection>,
+    /// Grund, falls die Datenbank beim Start nicht nutzbar war.
+    pub startup_error: Option<ApiError>,
+}
+
+impl DbState {
+    fn conn(&self) -> Result<&Connection, ApiError> {
+        self.conn.as_ref().ok_or_else(|| self.unavailable())
+    }
+
+    fn conn_mut(&mut self) -> Result<&mut Connection, ApiError> {
+        let error = self.unavailable();
+        self.conn.as_mut().ok_or(error)
+    }
+
+    fn unavailable(&self) -> ApiError {
+        self.startup_error
+            .clone()
+            .unwrap_or_else(|| ApiError::database("Die Datenbank ist nicht verfügbar"))
+    }
+}
+
 /// Gemeinsamer Datenbankzugriff für alle Commands.
-pub struct Db(pub Mutex<Connection>);
+pub struct Db(pub Mutex<DbState>);
 
 impl Db {
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, ApiError> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, DbState>, ApiError> {
         self.0
             .lock()
             .map_err(|_| ApiError::database("Datenbankverbindung nicht verfügbar"))
@@ -75,14 +101,14 @@ fn require_key(state: &VaultState) -> Result<SecretKey, ApiError> {
 
 #[tauri::command]
 pub fn list_vehicles(state: State<'_, Db>) -> Result<Vec<Vehicle>, ApiError> {
-    let conn = state.lock()?;
-    db::list_vehicles(&conn)
+    let state = state.lock()?;
+    db::list_vehicles(state.conn()?)
 }
 
 #[tauri::command]
 pub fn create_vehicle(state: State<'_, Db>, input: NewVehicle) -> Result<Vehicle, ApiError> {
-    let conn = state.lock()?;
-    db::create_vehicle(&conn, input)
+    let state = state.lock()?;
+    db::create_vehicle(state.conn()?, input)
 }
 
 #[tauri::command]
@@ -91,8 +117,8 @@ pub fn update_vehicle(
     id: String,
     patch: VehiclePatch,
 ) -> Result<Vehicle, ApiError> {
-    let conn = state.lock()?;
-    db::update_vehicle(&conn, &id, patch)
+    let state = state.lock()?;
+    db::update_vehicle(state.conn()?, &id, patch)
 }
 
 #[tauri::command]
@@ -102,40 +128,40 @@ pub fn update_vehicle_status(
     field: VehicleStatusField,
     value: bool,
 ) -> Result<Vehicle, ApiError> {
-    let conn = state.lock()?;
-    db::update_vehicle_status(&conn, &id, field, value)
+    let state = state.lock()?;
+    db::update_vehicle_status(state.conn()?, &id, field, value)
 }
 
 #[tauri::command]
 pub fn reorder_vehicles(state: State<'_, Db>, ids: Vec<String>) -> Result<Vec<Vehicle>, ApiError> {
-    let mut conn = state.lock()?;
-    db::reorder_vehicles(&mut conn, &ids)
+    let mut state = state.lock()?;
+    db::reorder_vehicles(state.conn_mut()?, &ids)
 }
 
 #[tauri::command]
 pub fn archive_vehicle(state: State<'_, Db>, id: String) -> Result<Vehicle, ApiError> {
-    let conn = state.lock()?;
-    db::archive_vehicle(&conn, &id)
+    let state = state.lock()?;
+    db::archive_vehicle(state.conn()?, &id)
 }
 
 #[tauri::command]
 pub fn restore_vehicle(state: State<'_, Db>, id: String) -> Result<Vehicle, ApiError> {
-    let conn = state.lock()?;
-    db::restore_vehicle(&conn, &id)
+    let state = state.lock()?;
+    db::restore_vehicle(state.conn()?, &id)
 }
 
 // ---------- Zahlungen ----------
 
 #[tauri::command]
 pub fn list_open_payments(state: State<'_, Db>) -> Result<Vec<Payment>, ApiError> {
-    let conn = state.lock()?;
-    db::list_open_payments(&conn)
+    let state = state.lock()?;
+    db::list_open_payments(state.conn()?)
 }
 
 #[tauri::command]
 pub fn create_payment(state: State<'_, Db>, input: NewPayment) -> Result<Payment, ApiError> {
-    let conn = state.lock()?;
-    db::create_payment(&conn, input)
+    let state = state.lock()?;
+    db::create_payment(state.conn()?, input)
 }
 
 #[tauri::command]
@@ -144,20 +170,20 @@ pub fn update_payment(
     id: String,
     patch: PaymentPatch,
 ) -> Result<Payment, ApiError> {
-    let conn = state.lock()?;
-    db::update_payment(&conn, &id, patch)
+    let state = state.lock()?;
+    db::update_payment(state.conn()?, &id, patch)
 }
 
 #[tauri::command]
 pub fn mark_payment_paid(state: State<'_, Db>, id: String) -> Result<Payment, ApiError> {
-    let conn = state.lock()?;
-    db::mark_payment_paid(&conn, &id)
+    let state = state.lock()?;
+    db::mark_payment_paid(state.conn()?, &id)
 }
 
 #[tauri::command]
 pub fn restore_payment(state: State<'_, Db>, id: String) -> Result<Payment, ApiError> {
-    let conn = state.lock()?;
-    db::restore_payment(&conn, &id)
+    let state = state.lock()?;
+    db::restore_payment(state.conn()?, &id)
 }
 
 // ---------- Versteckter Bereich ----------
@@ -186,8 +212,8 @@ pub fn list_hidden_entries(
     db: State<'_, Db>,
 ) -> Result<Vec<HiddenEntry>, ApiError> {
     let key = vault.master_key()?;
-    let conn = db.lock()?;
-    hidden::list_entries(&conn, &key)
+    let state = db.lock()?;
+    hidden::list_entries(state.conn()?, &key)
 }
 
 #[tauri::command]
@@ -197,8 +223,8 @@ pub fn create_hidden_entry(
     input: NewHiddenEntry,
 ) -> Result<HiddenEntry, ApiError> {
     let key = vault.master_key()?;
-    let conn = db.lock()?;
-    hidden::create_entry(&conn, &key, input)
+    let state = db.lock()?;
+    hidden::create_entry(state.conn()?, &key, input)
 }
 
 #[tauri::command]
@@ -209,8 +235,8 @@ pub fn update_hidden_entry(
     patch: HiddenEntryPatch,
 ) -> Result<HiddenEntry, ApiError> {
     let key = vault.master_key()?;
-    let conn = db.lock()?;
-    hidden::update_entry(&conn, &key, &id, patch)
+    let state = db.lock()?;
+    hidden::update_entry(state.conn()?, &key, &id, patch)
 }
 
 #[tauri::command]
@@ -220,8 +246,8 @@ pub fn archive_hidden_entry(
     id: String,
 ) -> Result<HiddenEntry, ApiError> {
     let key = vault.master_key()?;
-    let conn = db.lock()?;
-    hidden::archive_entry(&conn, &key, &id)
+    let state = db.lock()?;
+    hidden::archive_entry(state.conn()?, &key, &id)
 }
 
 #[tauri::command]
@@ -231,8 +257,8 @@ pub fn restore_hidden_entry(
     id: String,
 ) -> Result<HiddenEntry, ApiError> {
     let key = vault.master_key()?;
-    let conn = db.lock()?;
-    hidden::restore_entry(&conn, &key, &id)
+    let state = db.lock()?;
+    hidden::restore_entry(state.conn()?, &key, &id)
 }
 
 // ---------- Backup und Wiederherstellung ----------
@@ -294,8 +320,8 @@ pub async fn create_backup(
     };
 
     let date = {
-        let conn = db.lock()?;
-        db::now(&conn)?
+        let state = db.lock()?;
+        db::now(state.conn()?)?
             .split('T')
             .next()
             .unwrap_or("backup")
@@ -315,8 +341,8 @@ pub async fn create_backup(
         .map_err(|_| ApiError::backup("Ungültiger Speicherort"))?;
 
     let bytes = {
-        let conn = db.lock()?;
-        backup::create_backup_bytes(&conn, &keys)?
+        let state = db.lock()?;
+        backup::create_backup_bytes(state.conn()?, &keys)?
     };
     std::fs::write(&path, bytes)
         .map_err(|_| ApiError::backup("Backup-Datei konnte nicht geschrieben werden"))?;
@@ -352,7 +378,12 @@ pub async fn prepare_restore(
 
     let mut state = vault.lock()?;
     let current_key = state.keys.as_ref().map(|keys| keys.master_key.clone());
-    let recovery_code = state.keys.as_ref().map(|keys| keys.recovery_code.clone());
+    // Falls der Master-Key nicht geladen werden konnte, hilft womöglich noch
+    // der gespeicherte Wiederherstellungscode beim Entsperren des Backups.
+    let recovery_code = match state.keys.as_ref() {
+        Some(keys) => Some(keys.recovery_code.clone()),
+        None => keys::read_recovery_code(state.store.as_ref()).unwrap_or(None),
+    };
     let validated =
         backup::validate_backup_bytes(&bytes, file_name, current_key.as_ref(), recovery_code.as_ref())?;
 
@@ -370,46 +401,63 @@ pub async fn prepare_restore(
 
 /// Zweiter Schritt: bestätigte Wiederherstellung. Sichert vorher den
 /// aktuellen Zustand automatisch und tauscht die Datenbank atomar aus.
+/// Funktioniert auch als Reparaturweg, wenn die aktuelle Datenbank nicht
+/// nutzbar ist – dann wird die defekte Datei beiseitegelegt statt gesichert.
 #[tauri::command]
 pub async fn confirm_restore(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
     paths: State<'_, StoragePaths>,
 ) -> Result<(), ApiError> {
-    let mut state = vault.lock()?;
-    let staged = state
+    let mut vault_state = vault.lock()?;
+    let staged = vault_state
         .staged
         .take()
         .ok_or_else(|| ApiError::backup("Keine geprüfte Backup-Datei ausgewählt"))?;
-    let mut conn = db.lock()?;
+    let mut db_state = db.lock()?;
 
-    // 1. Automatische Sicherung des aktuellen Zustands.
-    {
-        let keys = state
-            .keys
-            .as_ref()
-            .ok_or_else(|| state.key_error.clone().unwrap_or_else(ApiError::keystore_unavailable))?;
-        backup::write_safety_backup(&conn, keys, &paths.backups_dir)?;
+    // 1. Automatische Sicherung des aktuellen Zustands. Ein richtiges
+    //    Safety-Backup braucht Datenbank UND Schlüssel; fehlt eines von
+    //    beiden, wird die aktuelle Datei stattdessen roh ins
+    //    Backup-Verzeichnis kopiert, damit nichts verloren geht.
+    match (db_state.conn.as_ref(), vault_state.keys.as_ref()) {
+        (Some(conn), Some(keys)) => {
+            backup::write_safety_backup(conn, keys, &paths.backups_dir)?;
+        }
+        _ => backup::preserve_broken_database(&paths.db_path, &paths.backups_dir),
     }
 
     // 2. Falls das Backup einen anderen Schlüssel mitbringt, zuerst den
     //    Schlüsselspeicher aktualisieren – schlägt das fehl, bleibt alles beim Alten.
     if staged.key_changed {
-        keys::store_master_key(state.store.as_ref(), &staged.master_key)?;
+        keys::store_master_key(vault_state.store.as_ref(), &staged.master_key)?;
     }
 
     // 3. Datenbank atomar austauschen.
-    if let Err(err) = backup::swap_database(&mut conn, &paths.db_path, &staged.db_bytes) {
+    if let Err(err) = backup::swap_database(&mut db_state.conn, &paths.db_path, &staged.db_bytes) {
         if staged.key_changed {
-            if let Some(previous) = &state.keys {
-                let _ = keys::store_master_key(state.store.as_ref(), &previous.master_key);
+            if let Some(previous) = &vault_state.keys {
+                let _ = keys::store_master_key(vault_state.store.as_ref(), &previous.master_key);
             }
         }
         return Err(err);
     }
+    db_state.startup_error = None;
 
-    if let Some(material) = state.keys.as_mut() {
-        material.master_key = staged.master_key.clone();
+    match vault_state.keys.as_mut() {
+        Some(material) => material.master_key = staged.master_key.clone(),
+        None => {
+            // Der Schlüssel aus dem Backup steht jetzt im Schlüsselspeicher:
+            // Material neu laden, damit der versteckte Bereich sofort nutzbar
+            // ist (Reparaturweg bei zuvor fehlendem Schlüssel).
+            match keys::load_or_init(vault_state.store.as_ref(), true) {
+                Ok(material) => {
+                    vault_state.keys = Some(material);
+                    vault_state.key_error = None;
+                }
+                Err(err) => vault_state.key_error = Some(err),
+            }
+        }
     }
     Ok(())
 }

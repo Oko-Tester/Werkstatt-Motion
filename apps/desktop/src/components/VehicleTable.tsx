@@ -13,6 +13,9 @@ interface VehicleTableProps {
   vehicles: Vehicle[];
   drafts: VehicleDraft[];
   loading: boolean;
+  /** Fehlermeldung, wenn die Daten nicht geladen werden konnten. */
+  loadError: string | null;
+  onRetryLoad: () => void;
   autoFocusId: string | null;
   fieldErrors: FieldErrors;
   onCommitText: (id: string, field: VehicleTextField, value: string) => void;
@@ -26,6 +29,8 @@ export function VehicleTable({
   vehicles,
   drafts,
   loading,
+  loadError,
+  onRetryLoad,
   autoFocusId,
   fieldErrors,
   onCommitText,
@@ -61,7 +66,8 @@ export function VehicleTable({
     isDone: draft.isDone,
   }));
 
-  const isEmpty = !loading && draftRows.length === 0 && vehicles.length === 0;
+  const isEmpty =
+    !loading && loadError === null && draftRows.length === 0 && vehicles.length === 0;
 
   return (
     <div className="vehicle-table-wrap">
@@ -107,6 +113,18 @@ export function VehicleTable({
             <tr>
               <td colSpan={9} className="empty-cell">
                 Laden …
+              </td>
+            </tr>
+          )}
+          {!loading && loadError !== null && (
+            <tr>
+              <td colSpan={9} className="empty-cell">
+                <div className="load-error" role="alert">
+                  <span>{loadError}</span>
+                  <button type="button" className="btn btn-secondary" onClick={onRetryLoad}>
+                    Erneut laden
+                  </button>
+                </div>
               </td>
             </tr>
           )}

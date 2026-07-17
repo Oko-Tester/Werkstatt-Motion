@@ -82,6 +82,7 @@ export default function App() {
   const [hiddenEntries, setHiddenEntries] = useState<HiddenEntry[]>([]);
   const [hiddenDrafts, setHiddenDrafts] = useState<HiddenEntryDraft[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [undoState, setUndoState] = useState<UndoState | null>(null);
@@ -115,31 +116,27 @@ export default function App() {
 
   // ---------- Laden, Hinweise, Undo ----------
 
+  async function loadCoreData() {
+    setLoading(true);
+    try {
+      const [vehicleList, paymentList] = await Promise.all([
+        api.listVehicles(),
+        api.listOpenPayments(),
+      ]);
+      setVehicles(vehicleList);
+      setPayments(paymentList);
+      setLoadError(null);
+    } catch (err) {
+      // Persistenter, nicht blockierender Fehlerzustand mit „Erneut laden“ –
+      // z. B. wenn die Datenbank beim Start nicht verfügbar ist.
+      setLoadError(toApiError(err).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [vehicleList, paymentList] = await Promise.all([
-          api.listVehicles(),
-          api.listOpenPayments(),
-        ]);
-        if (!cancelled) {
-          setVehicles(vehicleList);
-          setPayments(paymentList);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          showNotice(toApiError(err).message);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void loadCoreData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -855,6 +852,8 @@ export default function App() {
           vehicles={visibleVehicles}
           drafts={vehicleDrafts}
           loading={loading}
+          loadError={loadError}
+          onRetryLoad={() => void loadCoreData()}
           autoFocusId={autoFocusId}
           fieldErrors={fieldErrors}
           onCommitText={commitVehicleText}

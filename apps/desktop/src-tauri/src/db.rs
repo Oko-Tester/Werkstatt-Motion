@@ -52,6 +52,21 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_hidden_entries_active ON hidden_entries (archived_at, created_at);",
 ];
 
+/// Öffnet (oder erzeugt) die Datenbankdatei, setzt die Pragmas und führt die
+/// Migrationen aus. Liefert bei jedem Scheitern eine verständliche Meldung –
+/// der Aufrufer entscheidet, wie er ohne Datenbank weiterläuft.
+pub fn open(path: &std::path::Path) -> Result<Connection, ApiError> {
+    let mut conn = Connection::open(path)
+        .map_err(|_| ApiError::database("Die Datenbank konnte nicht geöffnet werden"))?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .and_then(|()| conn.pragma_update(None, "foreign_keys", "ON"))
+        .map_err(|_| ApiError::database("Die Datenbank konnte nicht geöffnet werden"))?;
+    migrate(&mut conn).map_err(|_| {
+        ApiError::database("Die Datenbank konnte nicht auf den neuesten Stand gebracht werden")
+    })?;
+    Ok(conn)
+}
+
 /// Bringt die Datenbank auf die aktuelle Schemaversion. Läuft in einer
 /// Transaktion und ist beliebig oft aufrufbar.
 pub fn migrate(conn: &mut Connection) -> Result<(), ApiError> {
@@ -678,6 +693,91 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code, ErrorCode::Validation);
         assert_eq!(get_payment(&conn, &payment.id).unwrap().amount_cents, 13500);
+    }
+
+    #[test]
+    fn open_erzeugt_neue_datenbank_und_meldet_defekte_dateien_verstaendlich() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Frischer Pfad: Datenbank wird angelegt und migriert.
+        let path = dir.path().join("neu.db");
+        let conn = open(&path).unwrap();
+        assert_eq!(schema_version(&conn).unwrap(), current_schema_version());
+        drop(conn);
+
+        // Defekte Datei: verständlicher Fehler ohne rohe SQLite-Details,
+        // die Datei bleibt unverändert (nichts wird überschrieben).
+        let broken = dir.path().join("defekt.db");
+        std::fs::write(&broken, b"das ist keine sqlite-datenbank, nur text").unwrap();
+        let err = open(&broken).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Database);
+        assert!(!err.message.to_lowercase().contains("sqlite"));
+        assert!(!err.message.contains("malformed"));
+        let bytes = std::fs::read(&broken).unwrap();
+        assert!(bytes.starts_with(b"das ist keine sqlite-datenbank"));
+    }
+
+    #[test]
+    fn grosse_datenmengen_bleiben_schnell_abrufbar() {
+        // Zieldaten aus den Abnahmekriterien: 250 aktive und 1.000 archivierte
+        // Fahrzeuge sowie 500 Zahlungen. Die Abfragen müssen dabei deutlich
+        // unter einer Sekunde bleiben (großzügige Schranke für langsame CI).
+        let mut conn = test_conn();
+        {
+            let tx = conn.transaction().unwrap();
+            let timestamp: String = tx
+                .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| row.get(0))
+                .unwrap();
+            for index in 0..1250 {
+                let archived_at: Option<&String> =
+                    if index >= 250 { Some(&timestamp) } else { None };
+                tx.execute(
+                    "INSERT INTO vehicles (
+                        id, customer_name, vehicle_name, license_plate,
+                        tuv_required, parts_ordered, parts_arrived, is_done,
+                        position, created_at, updated_at, archived_at
+                     ) VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, ?5, ?6, ?6, ?7)",
+                    params![
+                        format!("fz-{index}"),
+                        format!("Kunde {index}"),
+                        format!("Fahrzeug {index}"),
+                        format!("M-XX {index}"),
+                        index as i64,
+                        timestamp,
+                        archived_at,
+                    ],
+                )
+                .unwrap();
+            }
+            for index in 0..500 {
+                tx.execute(
+                    "INSERT INTO payments (id, customer_name, amount_cents, note, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, '', ?4, ?4)",
+                    params![format!("zh-{index}"), format!("Kunde {index}"), 100 + index as i64, timestamp],
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        assert_eq!(list_vehicles(&conn).unwrap().len(), 250);
+        assert_eq!(list_open_payments(&conn).unwrap().len(), 500);
+
+        // Komplette Neupriorisierung aller 250 aktiven Fahrzeuge in einer
+        // Transaktion – der teuerste Alltagsvorgang.
+        let ids: Vec<String> = list_vehicles(&conn)
+            .unwrap()
+            .into_iter()
+            .rev()
+            .map(|vehicle| vehicle.id)
+            .collect();
+        assert_eq!(reorder_vehicles(&mut conn, &ids).unwrap().len(), 250);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "Listen- und Reorder-Abfragen dauern zu lange: {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]

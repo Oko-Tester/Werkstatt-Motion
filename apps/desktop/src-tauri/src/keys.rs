@@ -123,6 +123,12 @@ pub fn store_master_key(store: &dyn KeyStore, key: &SecretKey) -> Result<(), Api
     store.write(MASTER_KEY_ENTRY, &encoded)
 }
 
+/// Liest nur den Wiederherstellungscode. Wird für die Backup-Validierung
+/// gebraucht, wenn der Master-Key selbst nicht (mehr) geladen werden konnte.
+pub fn read_recovery_code(store: &dyn KeyStore) -> Result<Option<Zeroizing<String>>, ApiError> {
+    store.read(RECOVERY_CODE_ENTRY)
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

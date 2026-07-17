@@ -183,6 +183,45 @@ describe("App: Status", () => {
   });
 });
 
+describe("App: Laden fehlgeschlagen", () => {
+  it("zeigt einen klaren Fehlerzustand mit „Erneut laden“, wenn die Datenbank nicht verfügbar ist", async () => {
+    const user = userEvent.setup();
+    backend.planFailure("list_vehicles", {
+      code: "database",
+      message: "Die Datenbank ist nicht verfügbar",
+    });
+    render(<App />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Die Datenbank ist nicht verfügbar");
+    // Kein irreführendes „Keine Fahrzeuge gefunden“ im Fehlerzustand.
+    expect(screen.queryByText("Keine Fahrzeuge gefunden")).not.toBeInTheDocument();
+
+    // Ein Klick lädt erneut – der Fehler war einmalig geplant.
+    await user.click(screen.getByRole("button", { name: "Erneut laden" }));
+    expect(await screen.findByDisplayValue("Müller, Anna")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Erneut laden" })).not.toBeInTheDocument();
+  });
+});
+
+describe("App: Escape und Feldfehler", () => {
+  it("räumt einen Feldfehler mit Escape ab und stellt den alten Wert wieder her", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    const customerField = screen.getByDisplayValue("Müller, Anna");
+    await user.clear(customerField);
+    await user.tab();
+    expect(await screen.findByText("Kunde darf nicht leer sein")).toBeInTheDocument();
+
+    await user.click(screen.getByDisplayValue("Müller, Anna"));
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByText("Kunde darf nicht leer sein")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByDisplayValue("Müller, Anna")).toBeInTheDocument();
+  });
+});
+
 describe("App: Priorisierung", () => {
   it("speichert die Reihenfolge nach dem Verschieben dauerhaft", async () => {
     const user = userEvent.setup();
@@ -199,6 +238,29 @@ describe("App: Priorisierung", () => {
     expect(order).toEqual(["Yilmaz, Emre", "Müller, Anna", "Schneider, Thomas"]);
     const firstRow = screen.getAllByRole("row")[1];
     expect(within(firstRow).getByDisplayValue("Yilmaz, Emre")).toBeInTheDocument();
+  });
+
+  it("ordnet Fahrzeuge per Drag-and-drop neu und speichert die Reihenfolge", async () => {
+    await renderApp();
+    const dataTransfer = {
+      effectAllowed: "none",
+      dropEffect: "none",
+      setData: () => undefined,
+      getData: () => "",
+    };
+    const rows = screen.getAllByRole("row");
+    // Zeile 1 (Müller) auf Zeile 3 (Schneider) ziehen.
+    fireEvent.dragStart(rows[1], { dataTransfer });
+    fireEvent.dragOver(rows[3], { dataTransfer });
+    fireEvent.drop(rows[3], { dataTransfer });
+    fireEvent.dragEnd(rows[1], { dataTransfer });
+
+    await waitFor(() => expect(backend.calls).toContain("reorder_vehicles"));
+    const order = backend.vehicles
+      .filter((entry) => entry.archivedAt === null)
+      .sort((a, b) => a.position - b.position)
+      .map((entry) => entry.customerName);
+    expect(order).toEqual(["Yilmaz, Emre", "Schneider, Thomas", "Müller, Anna"]);
   });
 
   it("stellt bei einem Speicherfehler die vorherige Reihenfolge wieder her", async () => {
@@ -219,6 +281,21 @@ describe("App: Priorisierung", () => {
 });
 
 describe("App: Archivieren und Undo", () => {
+  it("schließt die Rückgängig-Leiste ohne wiederherzustellen", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "M-AB 1234 archivieren" }));
+    await screen.findByRole("button", { name: "Rückgängig" });
+
+    await user.click(screen.getByRole("button", { name: "Hinweis schließen" }));
+    expect(screen.queryByRole("button", { name: "Rückgängig" })).not.toBeInTheDocument();
+    // Das Fahrzeug bleibt archiviert.
+    expect(screen.queryByDisplayValue("Müller, Anna")).not.toBeInTheDocument();
+    expect(
+      backend.vehicles.find((entry) => entry.licensePlate === "M-AB 1234")?.archivedAt,
+    ).not.toBeNull();
+  });
+
   it("archiviert ohne Rückfrage und stellt über Rückgängig wieder her", async () => {
     const user = userEvent.setup();
     await renderApp();

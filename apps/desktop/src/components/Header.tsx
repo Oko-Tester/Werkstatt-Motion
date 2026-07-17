@@ -195,6 +195,7 @@ export function Header({
             <span
               className={status?.kind === "error" ? "backup-status is-error" : "backup-status"}
               role="status"
+              title={status?.text}
             >
               {status?.text}
             </span>

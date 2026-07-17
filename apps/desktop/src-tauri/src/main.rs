@@ -11,10 +11,10 @@ mod models;
 
 use std::sync::Mutex;
 
-use rusqlite::Connection;
 use tauri::Manager;
 
-use commands::{Db, StoragePaths, Vault, VaultState};
+use commands::{Db, DbState, StoragePaths, Vault, VaultState};
+use error::ApiError;
 use keys::KeyStore;
 
 fn main() {
@@ -22,21 +22,30 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Datenbank liegt im App-Datenverzeichnis des Betriebssystems,
-            // nicht im Installationsordner.
+            // nicht im Installationsordner. Scheitert Öffnen oder Migration,
+            // startet die App trotzdem: Die Oberfläche zeigt einen klaren,
+            // nicht blockierenden Fehlerzustand, und eine Wiederherstellung
+            // aus einem Backup bleibt als Reparaturweg möglich.
             let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("werkstatt.db");
-            let mut conn = Connection::open(&db_path)?;
-            conn.pragma_update(None, "journal_mode", "WAL")?;
-            conn.pragma_update(None, "foreign_keys", "ON")?;
-            db::migrate(&mut conn)?;
+            let (conn, db_error) = match std::fs::create_dir_all(&data_dir)
+                .map_err(|_| ApiError::database("App-Datenverzeichnis konnte nicht angelegt werden"))
+                .and_then(|()| db::open(&db_path))
+            {
+                Ok(conn) => (Some(conn), None),
+                Err(err) => (None, Some(err)),
+            };
 
             // Master-Key aus dem Schlüsselspeicher des Betriebssystems laden
             // oder beim allerersten Start erzeugen. Scheitert das, startet die
             // App trotzdem – der versteckte Bereich meldet dann einen klaren
             // Fehlerzustand und erzeugt insbesondere KEINEN neuen Schlüssel,
-            // solange verschlüsselte Einträge existieren.
-            let has_encrypted_data = hidden::count_entries(&conn)? > 0;
+            // solange verschlüsselte Einträge existieren (oder der Bestand
+            // mangels Datenbank unbekannt ist).
+            let has_encrypted_data = match &conn {
+                Some(conn) => hidden::count_entries(conn).map(|count| count > 0).unwrap_or(true),
+                None => true,
+            };
             let store: Box<dyn KeyStore> = Box::new(keys::OsKeyStore);
             let (key_material, key_error) = match keys::load_or_init(store.as_ref(), has_encrypted_data)
             {
@@ -44,7 +53,10 @@ fn main() {
                 Err(err) => (None, Some(err)),
             };
 
-            app.manage(Db(Mutex::new(conn)));
+            app.manage(Db(Mutex::new(DbState {
+                conn,
+                startup_error: db_error,
+            })));
             app.manage(Vault(Mutex::new(VaultState {
                 store,
                 keys: key_material,
