@@ -79,13 +79,8 @@ input {
 
 .app-logo {
   flex: none;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius);
-  background: var(--color-primary);
-  color: #ffffff;
-  display: grid;
-  place-items: center;
+  width: 225px;
+  height: 45px;
   /* Halte-Ziel des versteckten Bereichs: keine Textauswahl, kein
      Browser-Long-Press-Verhalten – und bewusst keinerlei Halte-Animation. */
   user-select: none;
@@ -93,11 +88,12 @@ input {
   touch-action: none;
 }
 
-.app-title {
-  margin: 0;
-  font-size: var(--font-size-title);
-  font-weight: 600;
-  white-space: nowrap;
+.app-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .header-search {

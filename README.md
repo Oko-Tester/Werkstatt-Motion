@@ -1,6 +1,8 @@
-# Werkstatt Motion
+<p align="center">
+  <img src="docs/images/logo-readme.png" alt="Werkstatt Motion" width="760">
+</p>
 
-**Alle Fahrzeuge, Arbeiten und offenen Zahlungen auf einen Blick.**
+<p align="center"><strong>Alle Fahrzeuge, Arbeiten und offenen Zahlungen auf einen Blick.</strong></p>
 
 Werkstatt Motion ist eine einfache Anwendung für den täglichen Werkstattbetrieb.
 Keine verschachtelten Menüs, kein unnötiger Papierkram – einfach öffnen und loslegen.

@@ -176,20 +176,9 @@ export function Header({
           Bereich. Während des Haltens gibt es bewusst keinerlei sichtbare
           Rückmeldung – das ist versteckte Bedienung, kein Zugriffsschutz. */}
       <div className="app-logo" aria-hidden="true" {...longPress}>
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-        </svg>
+        <img src="/werkstatt-motion-logo.png" alt="" draggable="false" />
       </div>
-      <h1 className="app-title">Werkstatt Motion</h1>
+      <h1 className="visually-hidden">Werkstatt Motion</h1>
       <div className="header-search">
         <SearchInput value={search} onChange={onSearchChange} inputRef={searchRef} />
       </div>
