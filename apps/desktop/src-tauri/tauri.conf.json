@@ -30,6 +30,8 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
+    "license": "MIT",
+    "licenseFile": "../../../LICENSE",
     "targets": ["deb"],
     "publisher": "Werkstatt Motion",
     "copyright": "© 2026 Werkstatt Motion",

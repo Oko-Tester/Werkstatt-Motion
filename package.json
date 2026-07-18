@@ -2,6 +2,7 @@
   "name": "werkstatt-motion",
   "private": true,
   "version": "1.0.0",
+  "license": "MIT",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "dev": "pnpm --filter @werkstatt/desktop dev",

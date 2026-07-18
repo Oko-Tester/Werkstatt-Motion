@@ -111,6 +111,12 @@ So lässt sich die Sicherung öffnen und wieder einspielen:
 Falls Werkstatt Motion in einen anderen Ordner installiert wurde, befindet sich
 der Ordner **„Backups“** direkt neben der Datei `werkstatt-motion.exe`.
 
+## Lizenz
+
+Werkstatt Motion ist unter der [MIT-Lizenz](LICENSE) veröffentlicht. Die App
+und ihr Quellcode dürfen damit verwendet, verändert und weitergegeben werden,
+sofern der Lizenz- und Urheberrechtshinweis erhalten bleibt.
+
 ---
 
 Werkstatt Motion wurde für den Werkstattalltag gemacht: schnell verständlich,

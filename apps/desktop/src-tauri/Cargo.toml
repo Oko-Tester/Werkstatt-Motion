@@ -2,6 +2,7 @@
 name = "werkstatt-motion"
 version = "1.0.0"
 description = "Werkstatt Motion – Desktop-App für den Werkstattalltag"
+license = "MIT"
 edition = "2021"
 
 [build-dependencies]
