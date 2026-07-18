@@ -192,6 +192,10 @@ export interface BackupResult {
   path: string | null;
 }
 
+export interface UpdateBackupResult {
+  path: string;
+}
+
 export interface RestorePreview {
   cancelled: boolean;
   createdAt: string | null;
@@ -204,6 +208,11 @@ export interface RestorePreview {
 /** Öffnet den nativen Speichern-Dialog und schreibt die Backup-Datei. */
 export function createBackup(): Promise<BackupResult> {
   return invoke("create_backup");
+}
+
+/** Sichert die Daten vor einem Update neben der installierten Programmdatei. */
+export function createUpdateBackup(targetVersion: string): Promise<UpdateBackupResult> {
+  return invoke("create_update_backup", { targetVersion });
 }
 
 /** Öffnet den nativen Datei-Dialog und validiert das gewählte Backup. */

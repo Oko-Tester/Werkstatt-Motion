@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Ref } from "react";
 import { toApiError } from "../api";
 import type { BackupResult, RestorePreview } from "../api";
+import type { AvailableUpdate, UpdateProgress } from "../updates";
 import { useLongPress } from "../useLongPress";
 import { PrimaryButton } from "./PrimaryButton";
 import { SearchInput } from "./SearchInput";
@@ -18,6 +19,12 @@ interface HeaderProps {
   onPrepareRestore: () => Promise<RestorePreview>;
   onConfirmRestore: () => Promise<void>;
   onCancelRestore: () => Promise<void>;
+  onCheckForUpdates: () => Promise<AvailableUpdate | null>;
+  onInstallUpdate: (
+    targetVersion: string,
+    onProgress: (progress: UpdateProgress) => void,
+  ) => Promise<void>;
+  onDiscardUpdate: () => void;
   searchRef?: Ref<HTMLInputElement>;
 }
 
@@ -39,10 +46,15 @@ export function Header({
   onPrepareRestore,
   onConfirmRestore,
   onCancelRestore,
+  onCheckForUpdates,
+  onInstallUpdate,
+  onDiscardUpdate,
   searchRef,
 }: HeaderProps) {
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
+  const [updatePreview, setUpdatePreview] = useState<AvailableUpdate | null>(null);
+  const [updateMessage, setUpdateMessage] = useState("");
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const timerRef = useRef<number | null>(null);
@@ -91,6 +103,17 @@ export function Header({
       window.clearTimeout(timerRef.current);
     }
     timerRef.current = window.setTimeout(() => setStatus(null), STATUS_MS);
+  }
+
+  function errorMessage(err: unknown, fallback: string): string {
+    if (err instanceof Error && err.message.trim() !== "") {
+      return err.message;
+    }
+    if (typeof err === "string" && err.trim() !== "") {
+      return err;
+    }
+    const apiError = toApiError(err);
+    return apiError.message === "Speichern fehlgeschlagen" ? fallback : apiError.message;
   }
 
   async function handleBackupClick() {
@@ -157,6 +180,67 @@ export function Header({
     }
   }
 
+  async function handleUpdateCheck() {
+    if (busy) {
+      return;
+    }
+    setActionsMenuOpen(false);
+    setBusy(true);
+    showStatus("Suche nach Updates …", "ok");
+    try {
+      const available = await onCheckForUpdates();
+      if (available === null) {
+        showStatus("Werkstatt Motion ist aktuell", "ok");
+      } else {
+        setStatus(null);
+        setUpdateMessage("");
+        setUpdatePreview(available);
+      }
+    } catch (err) {
+      showStatus(errorMessage(err, "Die Update-Suche ist fehlgeschlagen"), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (busy || updatePreview === null) {
+      return;
+    }
+    const targetVersion = updatePreview.version;
+    setBusy(true);
+    setUpdateMessage("Sicherheits-Backup wird erstellt …");
+    try {
+      await onInstallUpdate(targetVersion, (progress) => {
+        if (progress.finished) {
+          setUpdateMessage("Update wird installiert …");
+          return;
+        }
+        if (progress.totalBytes !== null && progress.totalBytes > 0) {
+          const percent = Math.min(
+            100,
+            Math.round((progress.downloadedBytes / progress.totalBytes) * 100),
+          );
+          setUpdateMessage(`Update wird heruntergeladen … ${percent} %`);
+        } else {
+          setUpdateMessage("Update wird heruntergeladen …");
+        }
+      });
+    } catch (err) {
+      setUpdatePreview(null);
+      setUpdateMessage("");
+      showStatus(errorMessage(err, "Das Update konnte nicht installiert werden"), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleDiscardUpdate() {
+    onDiscardUpdate();
+    setUpdatePreview(null);
+    setUpdateMessage("");
+  }
+
   function describePreview(preview: RestorePreview): string {
     const date =
       preview.createdAt !== null
@@ -199,6 +283,43 @@ export function Header({
               className="icon-button"
               aria-label="Wiederherstellung abbrechen"
               onClick={handleCancelRestore}
+            >
+              <svg
+                aria-hidden="true"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          </div>
+        ) : updatePreview !== null ? (
+          <div className="update-confirm" role="group" aria-label="Update bestätigen">
+            <span className="update-confirm-text">
+              {updateMessage ||
+                `Version ${updatePreview.version} ist verfügbar (installiert: ${updatePreview.currentVersion})`}
+            </span>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={handleInstallUpdate}
+            >
+              Update installieren
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Update abbrechen"
+              disabled={busy}
+              onClick={handleDiscardUpdate}
             >
               <svg
                 aria-hidden="true"
@@ -284,6 +405,23 @@ export function Header({
                       <line x1="12" x2="12" y1="3" y2="15" />
                     </svg>
                     Wiederherstellen
+                  </button>
+                  <button type="button" role="menuitem" onClick={handleUpdateCheck}>
+                    <svg
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+                      <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+                    </svg>
+                    Nach Updates suchen
                   </button>
                 </div>
               ) : null}

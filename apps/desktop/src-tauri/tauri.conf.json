@@ -29,6 +29,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["deb"],
     "publisher": "Werkstatt Motion",
     "copyright": "© 2026 Werkstatt Motion",
@@ -48,6 +49,17 @@
         "installerIcon": "icons/icon.ico",
         "languages": ["German"],
         "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk4RDM0MDYzNzUwOUEzRjEKUldUeG93bDFZMERUbUkrS0NKSDNwQkdnWmNPd2xrbHFOcld3aXcrMk5OTTd5YlduMWxMazExY2MK",
+      "endpoints": [
+        "https://github.com/Oko-Tester/Werkstatt-Motion/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

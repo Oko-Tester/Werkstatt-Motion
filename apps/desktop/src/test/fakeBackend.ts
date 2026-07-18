@@ -321,7 +321,7 @@ export function installFakeBackend(seed?: {
       tuvRequired: vehicle.tuvRequired,
       partsOrdered: vehicle.partsOrdered,
       partsArrived: vehicle.partsArrived,
-      isDone: true,
+      isDone: vehicle.isDone,
       completedAt,
       archivedAt: vehicle.archivedAt,
       vehicleCreatedAt: vehicle.createdAt,
@@ -584,12 +584,16 @@ export function installFakeBackend(seed?: {
         const vehicle = findVehicle(String(args.id));
         vehicle.archivedAt ??= nextTimestamp();
         vehicle.updatedAt = vehicle.archivedAt;
-        const snapshot = vehicleHistory.find((item) => item.sourceVehicleId === vehicle.id);
-        if (snapshot) snapshot.archivedAt ??= vehicle.archivedAt;
+        const snapshot = ensureVehicleHistory(vehicle, vehicle.archivedAt);
+        snapshot.archivedAt ??= vehicle.archivedAt;
         return { ...vehicle };
       }
       case "restore_vehicle": {
         const vehicle = findVehicle(String(args.id));
+        const snapshotIndex = vehicleHistory.findIndex(
+          (item) => item.sourceVehicleId === vehicle.id && !item.isDone,
+        );
+        if (snapshotIndex >= 0) vehicleHistory.splice(snapshotIndex, 1);
         vehicle.archivedAt = null;
         vehicle.updatedAt = nextTimestamp();
         return { ...vehicle };
@@ -794,6 +798,15 @@ export function installFakeBackend(seed?: {
         const snapshot = takeSnapshot();
         backups.push(snapshot);
         return { saved: true, path: "/backups/test.werkstattbackup" };
+      }
+      case "create_update_backup": {
+        const snapshot = takeSnapshot();
+        backups.push(snapshot);
+        return {
+          path: `/installation/Backups/vor-update-1.0.0-auf-${String(
+            args.targetVersion,
+          )}.werkstattbackup`,
+        };
       }
       case "prepare_restore": {
         if (cancels.delete(cmd)) {

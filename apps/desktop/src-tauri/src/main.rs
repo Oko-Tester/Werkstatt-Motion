@@ -20,6 +20,8 @@ use keys::KeyStore;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Datenbank liegt im App-Datenverzeichnis des Betriebssystems,
             // nicht im Installationsordner. Scheitert Öffnen oder Migration,
@@ -122,6 +124,7 @@ fn main() {
             commands::list_hidden_entry_history,
             commands::list_secret_history,
             commands::create_backup,
+            commands::create_update_backup,
             commands::prepare_restore,
             commands::confirm_restore,
             commands::cancel_restore,

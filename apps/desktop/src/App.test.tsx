@@ -345,11 +345,23 @@ describe("App: Archivieren und Undo", () => {
         .not.toBeNull(),
     );
 
+    await user.click(screen.getByRole("button", { name: "Historie" }));
+    const history = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
+    const snapshots = within(history).getByRole("heading", { name: "Fahrzeug-Snapshots" })
+      .closest("section");
+    expect(snapshots).not.toBeNull();
+    expect(within(snapshots as HTMLElement).getByText("VW Golf VII")).toBeInTheDocument();
+    expect(within(snapshots as HTMLElement).getByText("M-AB 1234")).toBeInTheDocument();
+    await user.click(within(history).getByRole("button", { name: /Zur/ }));
+
     await user.click(await screen.findByRole("button", { name: "Rückgängig" }));
     expect(await screen.findByDisplayValue("Müller, Anna")).toBeInTheDocument();
     expect(
       backend.vehicles.find((entry) => entry.licensePlate === "M-AB 1234")?.archivedAt,
     ).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Historie" }));
+    expect(await screen.findByText("Keine Fahrzeug-Snapshots")).toBeInTheDocument();
   });
 });
 

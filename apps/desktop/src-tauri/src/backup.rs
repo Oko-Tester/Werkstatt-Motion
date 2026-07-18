@@ -350,6 +350,61 @@ pub fn write_safety_backup(
     Ok(path)
 }
 
+fn file_name_part(value: &str) -> String {
+    value
+        .chars()
+        .take(64)
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Erstellt die verpflichtende Sicherung vor einem App-Update. Sie liegt
+/// bewusst im Unterordner `Backups` neben der installierten Programmdatei.
+/// Kann dort nicht vollständig geschrieben werden, darf das Update nicht
+/// fortgesetzt werden.
+pub fn write_update_backup(
+    conn: &Connection,
+    keys: &KeyMaterial,
+    install_dir: &Path,
+    current_version: &str,
+    target_version: &str,
+) -> Result<PathBuf, ApiError> {
+    let backups_dir = install_dir.join("Backups");
+    std::fs::create_dir_all(&backups_dir).map_err(|_| {
+        ApiError::backup(
+            "Der Backup-Ordner neben der installierten App konnte nicht angelegt werden",
+        )
+    })?;
+
+    let stamp = db::now(conn)?.replace(':', "-");
+    let current = file_name_part(current_version);
+    let target = file_name_part(target_version);
+    let path = backups_dir.join(format!(
+        "vor-update-{current}-auf-{target}-{stamp}.{BACKUP_FILE_EXTENSION}"
+    ));
+    let temporary = path.with_extension(format!("{BACKUP_FILE_EXTENSION}.tmp"));
+    let bytes = create_backup_bytes(conn, keys)?;
+
+    std::fs::write(&temporary, bytes).map_err(|_| {
+        ApiError::backup(
+            "Das Sicherheits-Backup konnte nicht neben der installierten App gespeichert werden",
+        )
+    })?;
+    if std::fs::rename(&temporary, &path).is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(ApiError::backup(
+            "Das Sicherheits-Backup konnte nicht abgeschlossen werden",
+        ));
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +457,29 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn update_backup_liegt_neben_der_installation_und_ist_vollstaendig() {
+        let dir = tempfile::tempdir().unwrap();
+        let install_dir = dir.path().join("installation");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        let conn = open_db(&dir.path().join("aktuell.db"));
+        let keys = test_keys();
+        seed(&conn, &keys);
+
+        let path = write_update_backup(&conn, &keys, &install_dir, "1.0.0", "1.0.1").unwrap();
+
+        assert_eq!(path.parent(), Some(install_dir.join("Backups").as_path()));
+        assert!(path.exists());
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("vor-update-1.0.0-auf-1.0.1-"));
+        let bytes = std::fs::read(path).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains(MARKER_NAME));
+        validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
     }
 
     #[test]

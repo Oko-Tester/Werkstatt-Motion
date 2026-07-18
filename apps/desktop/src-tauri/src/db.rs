@@ -414,10 +414,10 @@ fn insert_vehicle_history_snapshot(
         return Ok(());
     }
     let vehicle = get_vehicle(conn, source_vehicle_id)?;
-    if !vehicle.is_done {
+    if !vehicle.is_done && vehicle.archived_at.is_none() {
         return Err(ApiError::validation(
             "isDone",
-            "Nur abgeschlossene Fahrzeuge können in die Historie übernommen werden",
+            "Nur abgeschlossene oder archivierte Fahrzeuge können in die Historie übernommen werden",
         ));
     }
 
@@ -436,8 +436,8 @@ fn insert_vehicle_history_snapshot(
     Ok(())
 }
 
-/// Erzeugt explizit einen idempotenten History-Snapshot. Ein unbekanntes oder
-/// noch nicht abgeschlossenes Fahrzeug wird backendseitig abgelehnt.
+/// Erzeugt explizit einen idempotenten History-Snapshot. Ein unbekanntes sowie
+/// weder abgeschlossenes noch archiviertes Fahrzeug wird backendseitig abgelehnt.
 pub fn create_vehicle_history_snapshot(
     conn: &Connection,
     source_vehicle_id: &str,
@@ -527,6 +527,8 @@ pub fn archive_vehicle(conn: &Connection, id: &str) -> Result<Vehicle, ApiError>
             timestamp
         }
     };
+    // Archivieren erzeugt selbst einen Snapshot, auch ohne vorheriges "Fertig".
+    insert_vehicle_history_snapshot(&tx, id, &archived_at)?;
     tx.execute(
         "UPDATE vehicle_history
          SET archived_at = COALESCE(archived_at, ?2)
@@ -538,14 +540,29 @@ pub fn archive_vehicle(conn: &Connection, id: &str) -> Result<Vehicle, ApiError>
 }
 
 pub fn restore_vehicle(conn: &Connection, id: &str) -> Result<Vehicle, ApiError> {
-    let timestamp = now(conn)?;
-    let changed = conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let current = get_vehicle(&tx, id)?;
+    if current.archived_at.is_some() {
+        if let Some(history) = get_vehicle_history_by_source(&tx, id)? {
+            // Nicht fertige Snapshots entstehen durch Archivieren und werden
+            // beim Rückgängig gemeinsam mit der Archivierung entfernt.
+            if !history.is_done {
+                tx.execute(
+                    "DELETE FROM vehicle_history WHERE source_vehicle_id = ?1",
+                    [id],
+                )?;
+            }
+        }
+    }
+    let timestamp = now(&tx)?;
+    let changed = tx.execute(
         "UPDATE vehicles SET archived_at = NULL, updated_at = ?2 WHERE id = ?1",
         params![id, timestamp],
     )?;
     if changed == 0 {
         return Err(ApiError::not_found("Fahrzeug nicht gefunden"));
     }
+    tx.commit()?;
     get_vehicle(conn, id)
 }
 
@@ -1228,10 +1245,16 @@ mod tests {
         let archived = archive_vehicle(&conn, &vehicle.id).unwrap();
         assert!(archived.archived_at.is_some());
         assert!(list_vehicles(&conn).unwrap().is_empty());
+        let history = list_completed_vehicle_history(&conn).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].source_vehicle_id, vehicle.id);
+        assert!(!history[0].is_done);
+        assert_eq!(history[0].archived_at, archived.archived_at);
 
         let restored = restore_vehicle(&conn, &vehicle.id).unwrap();
         assert!(restored.archived_at.is_none());
         assert_eq!(list_vehicles(&conn).unwrap().len(), 1);
+        assert!(list_completed_vehicle_history(&conn).unwrap().is_empty());
 
         let err = archive_vehicle(&conn, "fehlt").unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);

@@ -19,6 +19,7 @@ Keine verschachtelten Menüs, kein unnötiger Papierkram – einfach öffnen und
 - Fahrzeuge schnell nach Kunde, Kennzeichen oder Modell finden
 - Erledigte Aufträge in der Historie nachschlagen
 - Daten auf einem USB-Stick oder an einem anderen Ort sichern
+- Neue Versionen direkt in der App suchen und sicher installieren
 - Funktioniert auch ohne Internet
 
 ## So einfach geht's
@@ -65,6 +66,18 @@ erscheint sofort.
 
 Es werden keine zusätzlichen Programme und keine Anmeldung benötigt.
 
+## Updates
+
+Im Drei-Punkte-Menü oben rechts auf **„Nach Updates suchen“** klicken. Ist eine
+neue Version verfügbar, zeigt Werkstatt Motion die Versionsnummer an. Das
+Update startet erst nach einem Klick auf **„Update installieren“**.
+
+Vor der Installation erstellt die App automatisch ein vollständiges
+Sicherheits-Backup. Kann dieses Backup nicht gespeichert werden, wird das
+Update nicht durchgeführt. Für die Update-Suche wird kurzzeitig eine
+Internetverbindung benötigt; ansonsten bleibt Werkstatt Motion vollständig
+offline nutzbar.
+
 ## Datensicherung
 
 Über **„Backup“** lässt sich jederzeit eine Sicherung erstellen – zum Beispiel
@@ -73,6 +86,30 @@ wieder eingespielt werden.
 
 **Empfehlung:** Regelmäßig ein Backup erstellen und getrennt vom Werkstatt-PC
 aufbewahren.
+
+### Daten nach einem Update wiederherstellen
+
+Die automatische Sicherung liegt im Ordner **„Backups“** neben der installierten
+App. Der Standardpfad unter Windows lautet:
+
+```text
+%LOCALAPPDATA%\Werkstatt Motion\Backups
+```
+
+So lässt sich die Sicherung öffnen und wieder einspielen:
+
+1. **Windows-Taste + R** drücken.
+2. `%LOCALAPPDATA%\Werkstatt Motion\Backups` eingeben und mit **Enter**
+   bestätigen.
+3. Die neueste Datei auswählen, deren Name mit `vor-update-` beginnt und auf
+   `.werkstattbackup` endet.
+4. Werkstatt Motion öffnen und im Drei-Punkte-Menü auf
+   **„Wiederherstellen“** klicken.
+5. Die Backup-Datei aus dem Ordner auswählen und
+   **„Jetzt wiederherstellen“** bestätigen.
+
+Falls Werkstatt Motion in einen anderen Ordner installiert wurde, befindet sich
+der Ordner **„Backups“** direkt neben der Datei `werkstatt-motion.exe`.
 
 ---
 

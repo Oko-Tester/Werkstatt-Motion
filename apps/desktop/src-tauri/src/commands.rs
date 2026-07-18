@@ -469,6 +469,12 @@ pub struct BackupResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateBackupResult {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RestorePreview {
     pub cancelled: bool,
     pub created_at: Option<String>,
@@ -549,6 +555,58 @@ pub async fn create_backup(
     Ok(BackupResult {
         saved: true,
         path: Some(path.display().to_string()),
+    })
+}
+
+/// Erstellt unmittelbar vor einem Update eine vollständige Sicherung im
+/// Ordner `Backups` neben der laufenden EXE. Jeder Fehler wird an das
+/// Frontend weitergegeben und verhindert dadurch die Update-Installation.
+#[tauri::command]
+pub fn create_update_backup(
+    target_version: String,
+    vault: State<'_, Vault>,
+    db: State<'_, Db>,
+) -> Result<UpdateBackupResult, ApiError> {
+    if target_version.trim().is_empty() || target_version.len() > 64 {
+        return Err(ApiError::validation(
+            "targetVersion",
+            "Die Update-Version ist ungültig",
+        ));
+    }
+
+    let install_dir = std::env::current_exe()
+        .map_err(|_| ApiError::backup("Der Installationsordner konnte nicht ermittelt werden"))?
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| ApiError::backup("Der Installationsordner konnte nicht ermittelt werden"))?;
+
+    let keys = {
+        let state = vault.lock()?;
+        match &state.keys {
+            Some(material) => KeyMaterial {
+                master_key: material.master_key.clone(),
+                recovery_code: material.recovery_code.clone(),
+            },
+            None => {
+                return Err(state
+                    .key_error
+                    .clone()
+                    .unwrap_or_else(ApiError::keystore_unavailable))
+            }
+        }
+    };
+    let path = {
+        let state = db.lock()?;
+        backup::write_update_backup(
+            state.conn()?,
+            &keys,
+            &install_dir,
+            env!("CARGO_PKG_VERSION"),
+            target_version.trim(),
+        )?
+    };
+    Ok(UpdateBackupResult {
+        path: path.display().to_string(),
     })
 }
 

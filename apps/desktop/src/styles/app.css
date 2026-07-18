@@ -174,13 +174,15 @@ input {
 }
 
 /* Zweistufige Inline-Bestätigung der Wiederherstellung (kein Modal). */
-.restore-confirm {
+.restore-confirm,
+.update-confirm {
   display: flex;
   align-items: center;
   gap: var(--space-1);
 }
 
-.restore-confirm-text {
+.restore-confirm-text,
+.update-confirm-text {
   /* Passt zweizeilig auch in ein 1100 px breites Fenster. */
   max-width: 360px;
   color: var(--color-text-muted);

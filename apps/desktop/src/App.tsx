@@ -13,6 +13,8 @@ import { UndoBar } from "./components/UndoBar";
 import { VehicleTable } from "./components/VehicleTable";
 import { parseEuroInput } from "./money";
 import { VEHICLE_COLUMN_IDS } from "./types";
+import * as updates from "./updates";
+import type { UpdateProgress } from "./updates";
 import type {
   CustomerSuggestion,
   FieldErrors,
@@ -1124,6 +1126,24 @@ export default function App() {
     return api.cancelRestore();
   }
 
+  function handleCheckForUpdates() {
+    return updates.checkForUpdate();
+  }
+
+  async function handleInstallUpdate(
+    targetVersion: string,
+    onProgress: (progress: UpdateProgress) => void,
+  ) {
+    // Die Installation darf erst beginnen, nachdem das Backend das
+    // Sicherheits-Backup vollständig neben der EXE gespeichert hat.
+    await api.createUpdateBackup(targetVersion);
+    await updates.installUpdate(onProgress);
+  }
+
+  function handleDiscardUpdate() {
+    updates.discardUpdate();
+  }
+
   return (
     <AppShell
       header={
@@ -1137,6 +1157,9 @@ export default function App() {
           onPrepareRestore={handlePrepareRestore}
           onConfirmRestore={handleConfirmRestore}
           onCancelRestore={handleCancelRestore}
+          onCheckForUpdates={handleCheckForUpdates}
+          onInstallUpdate={handleInstallUpdate}
+          onDiscardUpdate={handleDiscardUpdate}
           searchRef={searchRef}
         />
       }

@@ -6,7 +6,21 @@ import App from "./App";
 import { installFakeBackend } from "./test/fakeBackend";
 import type { FakeBackend } from "./test/fakeBackend";
 
+const updateMocks = vi.hoisted(() => ({
+  checkForUpdate: vi.fn(),
+  installUpdate: vi.fn(),
+  discardUpdate: vi.fn(),
+}));
+
+vi.mock("./updates", () => updateMocks);
+
 const HIDDEN_REGION = { name: "Weitere Zahlungen" };
+
+beforeEach(() => {
+  updateMocks.checkForUpdate.mockReset().mockResolvedValue(null);
+  updateMocks.installUpdate.mockReset().mockResolvedValue(undefined);
+  updateMocks.discardUpdate.mockReset();
+});
 
 function seedData() {
   return {
@@ -259,7 +273,7 @@ describe("Backup und Wiederherstellung", () => {
     clearMocks();
   });
 
-  it("zeigt Backup und Wiederherstellung im Drei-Punkte-Menü", async () => {
+  it("zeigt Backup, Wiederherstellung und Update-Suche im Drei-Punkte-Menü", async () => {
     const user = userEvent.setup();
     await renderApp();
 
@@ -271,10 +285,67 @@ describe("Backup und Wiederherstellung", () => {
     expect(screen.getByRole("menu", { name: "Weitere Aktionen" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Backup" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Wiederherstellen" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Nach Updates suchen" })).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("meldet, wenn bereits die aktuelle Version installiert ist", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Nach Updates suchen" }));
+
+    expect(await screen.findByText("Werkstatt Motion ist aktuell")).toBeInTheDocument();
+    expect(updateMocks.checkForUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("erstellt vor der Update-Installation zwingend ein Backup", async () => {
+    const user = userEvent.setup();
+    updateMocks.checkForUpdate.mockResolvedValue({
+      version: "1.0.1",
+      currentVersion: "1.0.0",
+      notes: "Test-Update",
+    });
+    await renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Nach Updates suchen" }));
+    expect(await screen.findByRole("group", { name: "Update bestätigen" })).toHaveTextContent(
+      "Version 1.0.1 ist verfügbar",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Update installieren" }));
+
+    await waitFor(() => expect(backend.calls).toContain("create_update_backup"));
+    expect(
+      backend.callPayloads.find((call) => call.cmd === "create_update_backup")?.payload,
+    ).toMatchObject({ targetVersion: "1.0.1" });
+    expect(updateMocks.installUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("installiert kein Update, wenn das automatische Backup fehlschlägt", async () => {
+    const user = userEvent.setup();
+    updateMocks.checkForUpdate.mockResolvedValue({
+      version: "1.0.1",
+      currentVersion: "1.0.0",
+      notes: null,
+    });
+    backend.planFailure("create_update_backup", {
+      code: "backup",
+      message: "Sicherheits-Backup konnte nicht gespeichert werden",
+    });
+    await renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Nach Updates suchen" }));
+    await user.click(await screen.findByRole("button", { name: "Update installieren" }));
+
+    expect(await screen.findByText("Sicherheits-Backup konnte nicht gespeichert werden")).toBeInTheDocument();
+    expect(updateMocks.installUpdate).not.toHaveBeenCalled();
   });
 
   it("erstellt ein Backup mit einem Klick und zeigt eine dezente Bestätigung", async () => {
