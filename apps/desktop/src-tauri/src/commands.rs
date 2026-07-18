@@ -1,20 +1,24 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::backup::{self, ValidatedBackup, BACKUP_FILE_EXTENSION};
-use crate::crypto::SecretKey;
+use crate::crypto::{self, SecretKey};
 use crate::db;
 use crate::error::ApiError;
 use crate::hidden;
 use crate::keys::{self, KeyMaterial, KeyStore};
 use crate::models::{
-    HiddenEntry, HiddenEntryPatch, NewHiddenEntry, NewPayment, NewVehicle, Payment, PaymentPatch,
-    Vehicle, VehiclePatch, VehicleStatusField,
+    CustomerSuggestion, HiddenEntry, HiddenEntryPatch, NewHiddenEntry, NewPayment, NewVehicle,
+    Payment, PaymentPatch, SecretHistoryEntry, UiPreferences, Vehicle, VehicleHistory,
+    VehiclePatch, VehicleStatusField,
 };
 
 /// Datenbankzustand: Die App startet auch, wenn die Datenbank nicht geöffnet
@@ -78,6 +82,55 @@ impl Vault {
     fn master_key(&self) -> Result<SecretKey, ApiError> {
         let state = self.lock()?;
         require_key(&state)
+    }
+}
+
+/// Flüchtige Berechtigungen für Klartextzugriffe auf den versteckten Bereich.
+/// Es werden ausschließlich zufällige Tokens im Prozessspeicher gehalten; ein
+/// Neustart oder Drop beendet damit automatisch alle Sitzungen.
+#[derive(Default)]
+pub struct SecretSessions(Mutex<HashSet<String>>);
+
+impl SecretSessions {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashSet<String>>, ApiError> {
+        self.0
+            .lock()
+            .map_err(|_| ApiError::database("Secret-Sitzungen sind nicht verfügbar"))
+    }
+
+    fn begin(&self) -> Result<String, ApiError> {
+        let mut sessions = self.lock()?;
+        loop {
+            let token = URL_SAFE_NO_PAD.encode(crypto::random_bytes(32));
+            if sessions.insert(token.clone()) {
+                return Ok(token);
+            }
+        }
+    }
+
+    fn require(&self, token: &str) -> Result<(), ApiError> {
+        if token.is_empty() || !self.lock()?.contains(token) {
+            return Err(ApiError::validation(
+                "sessionToken",
+                "Secret-Sitzung ist ungültig oder beendet",
+            ));
+        }
+        Ok(())
+    }
+
+    fn end(&self, token: &str) -> Result<(), ApiError> {
+        if token.is_empty() || !self.lock()?.remove(token) {
+            return Err(ApiError::validation(
+                "sessionToken",
+                "Secret-Sitzung ist ungültig oder beendet",
+            ));
+        }
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), ApiError> {
+        self.lock()?.clear();
+        Ok(())
     }
 }
 
@@ -150,6 +203,57 @@ pub fn restore_vehicle(state: State<'_, Db>, id: String) -> Result<Vehicle, ApiE
     db::restore_vehicle(state.conn()?, &id)
 }
 
+#[tauri::command]
+pub fn create_vehicle_history_snapshot(
+    state: State<'_, Db>,
+    id: String,
+) -> Result<VehicleHistory, ApiError> {
+    let state = state.lock()?;
+    db::create_vehicle_history_snapshot(state.conn()?, &id)
+}
+
+#[tauri::command]
+pub fn list_completed_vehicle_history(
+    state: State<'_, Db>,
+) -> Result<Vec<VehicleHistory>, ApiError> {
+    let state = state.lock()?;
+    db::list_completed_vehicle_history(state.conn()?)
+}
+
+#[tauri::command]
+pub fn list_customer_suggestions(
+    state: State<'_, Db>,
+) -> Result<Vec<CustomerSuggestion>, ApiError> {
+    let state = state.lock()?;
+    db::list_customer_suggestions(state.conn()?)
+}
+
+// ---------- UI-Präferenzen ----------
+
+#[tauri::command]
+pub fn get_ui_preferences(state: State<'_, Db>) -> Result<UiPreferences, ApiError> {
+    let state = state.lock()?;
+    db::get_ui_preferences(state.conn()?)
+}
+
+#[tauri::command]
+pub fn update_payments_panel_collapsed(
+    state: State<'_, Db>,
+    collapsed: bool,
+) -> Result<UiPreferences, ApiError> {
+    let state = state.lock()?;
+    db::update_payments_panel_collapsed(state.conn()?, collapsed)
+}
+
+#[tauri::command]
+pub fn update_vehicle_column_order(
+    state: State<'_, Db>,
+    column_order: Vec<String>,
+) -> Result<UiPreferences, ApiError> {
+    let state = state.lock()?;
+    db::update_vehicle_column_order(state.conn()?, &column_order)
+}
+
 // ---------- Zahlungen ----------
 
 #[tauri::command]
@@ -207,10 +311,37 @@ pub fn hidden_status(vault: State<'_, Vault>) -> Result<HiddenStatus, ApiError> 
 }
 
 #[tauri::command]
+pub fn begin_secret_session(
+    vault: State<'_, Vault>,
+    db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+) -> Result<String, ApiError> {
+    let key = vault.master_key()?;
+    let state = db.lock()?;
+    // Eine Sitzung wird erst ausgestellt, nachdem Altbestand und vorhandene
+    // History authentifiziert sowie fehlende Archiv-Snapshots nachgezogen sind.
+    hidden::verify_all(state.conn()?, &key)?;
+    hidden::backfill_archived_history(state.conn()?, &key)?;
+    hidden::verify_all(state.conn()?, &key)?;
+    sessions.begin()
+}
+
+#[tauri::command]
+pub fn end_secret_session(
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
+) -> Result<(), ApiError> {
+    sessions.end(&session_token)
+}
+
+#[tauri::command]
 pub fn list_hidden_entries(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
 ) -> Result<Vec<HiddenEntry>, ApiError> {
+    sessions.require(&session_token)?;
     let key = vault.master_key()?;
     let state = db.lock()?;
     hidden::list_entries(state.conn()?, &key)
@@ -220,8 +351,11 @@ pub fn list_hidden_entries(
 pub fn create_hidden_entry(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
     input: NewHiddenEntry,
 ) -> Result<HiddenEntry, ApiError> {
+    sessions.require(&session_token)?;
     let key = vault.master_key()?;
     let state = db.lock()?;
     hidden::create_entry(state.conn()?, &key, input)
@@ -231,9 +365,12 @@ pub fn create_hidden_entry(
 pub fn update_hidden_entry(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
     id: String,
     patch: HiddenEntryPatch,
 ) -> Result<HiddenEntry, ApiError> {
+    sessions.require(&session_token)?;
     let key = vault.master_key()?;
     let state = db.lock()?;
     hidden::update_entry(state.conn()?, &key, &id, patch)
@@ -243,8 +380,11 @@ pub fn update_hidden_entry(
 pub fn archive_hidden_entry(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
     id: String,
 ) -> Result<HiddenEntry, ApiError> {
+    sessions.require(&session_token)?;
     let key = vault.master_key()?;
     let state = db.lock()?;
     hidden::archive_entry(state.conn()?, &key, &id)
@@ -254,11 +394,44 @@ pub fn archive_hidden_entry(
 pub fn restore_hidden_entry(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
     id: String,
 ) -> Result<HiddenEntry, ApiError> {
+    sessions.require(&session_token)?;
     let key = vault.master_key()?;
     let state = db.lock()?;
     hidden::restore_entry(state.conn()?, &key, &id)
+}
+
+#[tauri::command]
+pub fn list_hidden_entry_history(
+    vault: State<'_, Vault>,
+    db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
+) -> Result<Vec<SecretHistoryEntry>, ApiError> {
+    sessions.require(&session_token)?;
+    let key = vault.master_key()?;
+    let state = db.lock()?;
+    hidden::backfill_archived_history(state.conn()?, &key)?;
+    hidden::list_history(state.conn()?, &key)
+}
+
+/// Kompakter Alias für Clients, die den fachlichen Namen „Secret History“
+/// verwenden. Beide Commands haben identische Session-Pflichten.
+#[tauri::command]
+pub fn list_secret_history(
+    vault: State<'_, Vault>,
+    db: State<'_, Db>,
+    sessions: State<'_, SecretSessions>,
+    session_token: String,
+) -> Result<Vec<SecretHistoryEntry>, ApiError> {
+    sessions.require(&session_token)?;
+    let key = vault.master_key()?;
+    let state = db.lock()?;
+    hidden::backfill_archived_history(state.conn()?, &key)?;
+    hidden::list_history(state.conn()?, &key)
 }
 
 // ---------- Backup und Wiederherstellung ----------
@@ -334,7 +507,10 @@ pub async fn create_backup(
         .set_file_name(&format!("werkstatt-backup-{date}.{BACKUP_FILE_EXTENSION}"))
         .blocking_save_file();
     let Some(file_path) = picked else {
-        return Ok(BackupResult { saved: false, path: None });
+        return Ok(BackupResult {
+            saved: false,
+            path: None,
+        });
     };
     let path = file_path
         .into_path()
@@ -384,8 +560,12 @@ pub async fn prepare_restore(
         Some(keys) => Some(keys.recovery_code.clone()),
         None => keys::read_recovery_code(state.store.as_ref()).unwrap_or(None),
     };
-    let validated =
-        backup::validate_backup_bytes(&bytes, file_name, current_key.as_ref(), recovery_code.as_ref())?;
+    let validated = backup::validate_backup_bytes(
+        &bytes,
+        file_name,
+        current_key.as_ref(),
+        recovery_code.as_ref(),
+    )?;
 
     let preview = RestorePreview {
         cancelled: false,
@@ -408,6 +588,7 @@ pub async fn confirm_restore(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
     paths: State<'_, StoragePaths>,
+    sessions: State<'_, SecretSessions>,
 ) -> Result<(), ApiError> {
     let mut vault_state = vault.lock()?;
     let staged = vault_state
@@ -459,6 +640,9 @@ pub async fn confirm_restore(
             }
         }
     }
+    // Tokens dürfen eine ausgetauschte Datenbank bzw. einen ausgetauschten
+    // Master-Key nicht überleben.
+    sessions.clear()?;
     Ok(())
 }
 
@@ -467,4 +651,58 @@ pub async fn confirm_restore(
 pub fn cancel_restore(vault: State<'_, Vault>) -> Result<(), ApiError> {
     vault.lock()?.staged = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ErrorCode;
+
+    #[test]
+    fn secret_sessions_nutzen_zufaellige_fuechtige_tokens() {
+        let sessions = SecretSessions::default();
+        let first = sessions.begin().unwrap();
+        let second = sessions.begin().unwrap();
+        assert_ne!(first, second);
+        assert_eq!(URL_SAFE_NO_PAD.decode(first.as_bytes()).unwrap().len(), 32);
+        assert_eq!(URL_SAFE_NO_PAD.decode(second.as_bytes()).unwrap().len(), 32);
+        sessions.require(&first).unwrap();
+        sessions.require(&second).unwrap();
+
+        sessions.end(&first).unwrap();
+        let err = sessions.require(&first).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Validation);
+        assert_eq!(err.field.as_deref(), Some("sessionToken"));
+        // Andere Sitzungen bleiben gültig.
+        sessions.require(&second).unwrap();
+
+        // Ein neuer Prozesszustand kennt frühere Tokens nicht: Es gibt keine
+        // Persistenz in SQLite, Dateisystem oder Schlüsselspeicher.
+        let restarted = SecretSessions::default();
+        assert_eq!(
+            restarted.require(&second).unwrap_err().code,
+            ErrorCode::Validation
+        );
+    }
+
+    #[test]
+    fn secret_session_end_und_clear_sind_strikt() {
+        let sessions = SecretSessions::default();
+        let a = sessions.begin().unwrap();
+        let b = sessions.begin().unwrap();
+        assert_eq!(
+            sessions.end("ungueltig").unwrap_err().code,
+            ErrorCode::Validation
+        );
+        sessions.clear().unwrap();
+        assert_eq!(
+            sessions.require(&a).unwrap_err().code,
+            ErrorCode::Validation
+        );
+        assert_eq!(
+            sessions.require(&b).unwrap_err().code,
+            ErrorCode::Validation
+        );
+        assert_eq!(sessions.end(&a).unwrap_err().code, ErrorCode::Validation);
+    }
 }

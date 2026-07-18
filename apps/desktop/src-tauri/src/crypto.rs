@@ -74,7 +74,13 @@ pub fn seal(
 ) -> Result<(Vec<u8>, [u8; NONCE_LEN]), ApiError> {
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
     let ciphertext = cipher(key)
-        .encrypt(&nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| ApiError::crypto())?;
     let nonce_bytes: [u8; NONCE_LEN] = nonce
         .as_slice()
@@ -94,7 +100,13 @@ pub fn open(
     let nonce: [u8; NONCE_LEN] = nonce.try_into().map_err(|_| ApiError::crypto())?;
     let nonce = XNonce::from(nonce);
     let plaintext = cipher(key)
-        .decrypt(&nonce, Payload { msg: ciphertext, aad })
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| ApiError::crypto())?;
     Ok(Zeroizing::new(plaintext))
 }

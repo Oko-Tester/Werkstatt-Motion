@@ -1,9 +1,10 @@
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::models::{
-    NewPayment, NewVehicle, Payment, PaymentPatch, Vehicle, VehiclePatch, VehicleStatusField,
+    CustomerSuggestion, NewPayment, NewVehicle, Payment, PaymentPatch, UiPreferences, Vehicle,
+    VehicleHistory, VehiclePatch, VehicleStatusField,
 };
 
 /// Versionierte Migrationen. Der Index + 1 entspricht der Zielversion in
@@ -50,6 +51,58 @@ const MIGRATIONS: &[&str] = &[
         archived_at        TEXT
     );
     CREATE INDEX idx_hidden_entries_active ON hidden_entries (archived_at, created_at);",
+    // Version 3: Stabile, einmalige Fahrzeug-Snapshots. Die UNIQUE-Bindung an
+    // die Quell-ID macht den Abschluss auch bei Wiederholung idempotent.
+    "CREATE TABLE vehicle_history (
+        id                  TEXT PRIMARY KEY,
+        source_vehicle_id   TEXT NOT NULL UNIQUE,
+        customer_name       TEXT NOT NULL,
+        vehicle_name        TEXT NOT NULL DEFAULT '',
+        license_plate       TEXT NOT NULL DEFAULT '',
+        tuv_required        INTEGER NOT NULL,
+        parts_ordered       INTEGER NOT NULL,
+        parts_arrived       INTEGER NOT NULL,
+        is_done             INTEGER NOT NULL,
+        completed_at        TEXT NOT NULL,
+        archived_at         TEXT,
+        vehicle_created_at  TEXT NOT NULL,
+        snapshot_created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_vehicle_history_completed
+        ON vehicle_history (completed_at DESC, snapshot_created_at DESC, id ASC);
+    INSERT OR IGNORE INTO vehicle_history (
+        id, source_vehicle_id, customer_name, vehicle_name, license_plate,
+        tuv_required, parts_ordered, parts_arrived, is_done, completed_at,
+        archived_at, vehicle_created_at, snapshot_created_at
+    )
+    SELECT lower(hex(randomblob(16))), id, customer_name, vehicle_name, license_plate,
+           tuv_required, parts_ordered, parts_arrived, is_done, updated_at,
+           archived_at, created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    FROM vehicles WHERE is_done = 1;",
+    // Version 4: Historie versteckter Einträge ohne Klartextspalten. Der
+    // verschlüsselte Backfill erfolgt erst, sobald der Vault-Key verfügbar ist.
+    "CREATE TABLE hidden_entry_history (
+        id                     TEXT PRIMARY KEY,
+        source_hidden_entry_id TEXT NOT NULL UNIQUE,
+        encrypted_payload      BLOB NOT NULL,
+        nonce                  BLOB NOT NULL,
+        encryption_version     INTEGER NOT NULL,
+        completed_at           TEXT NOT NULL,
+        created_at             TEXT NOT NULL
+    );
+    CREATE INDEX idx_hidden_entry_history_completed
+        ON hidden_entry_history (completed_at DESC, created_at DESC, id ASC);",
+    // Version 5: Versionierte, typisierte UI-Präferenzen als Singleton.
+    "CREATE TABLE ui_preferences (
+        id                       INTEGER PRIMARY KEY CHECK (id = 1),
+        version                  INTEGER NOT NULL,
+        payments_panel_collapsed INTEGER NOT NULL DEFAULT 0,
+        vehicle_column_order     TEXT NOT NULL
+    );
+    INSERT INTO ui_preferences
+        (id, version, payments_panel_collapsed, vehicle_column_order)
+    VALUES
+        (1, 1, 0, '[\"customerName\",\"vehicleName\",\"licensePlate\",\"tuvRequired\",\"partsOrdered\",\"partsArrived\",\"isDone\"]');",
 ];
 
 /// Öffnet (oder erzeugt) die Datenbankdatei, setzt die Pragmas und führt die
@@ -91,11 +144,11 @@ pub fn current_schema_version() -> i64 {
 }
 
 pub fn now(conn: &Connection) -> Result<String, ApiError> {
-    Ok(conn.query_row(
-        "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-        [],
-        |row| row.get(0),
-    )?)
+    Ok(
+        conn.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 /// Kennzeichen normalisieren: Großschreibung, überflüssige Leerzeichen entfernen.
@@ -173,14 +226,36 @@ fn payment_from_row(row: &Row<'_>) -> rusqlite::Result<Payment> {
     })
 }
 
+fn vehicle_history_from_row(row: &Row<'_>) -> rusqlite::Result<VehicleHistory> {
+    Ok(VehicleHistory {
+        id: row.get("id")?,
+        source_vehicle_id: row.get("source_vehicle_id")?,
+        customer_name: row.get("customer_name")?,
+        vehicle_name: row.get("vehicle_name")?,
+        license_plate: row.get("license_plate")?,
+        tuv_required: row.get("tuv_required")?,
+        parts_ordered: row.get("parts_ordered")?,
+        parts_arrived: row.get("parts_arrived")?,
+        is_done: row.get("is_done")?,
+        completed_at: row.get("completed_at")?,
+        archived_at: row.get("archived_at")?,
+        vehicle_created_at: row.get("vehicle_created_at")?,
+        snapshot_created_at: row.get("snapshot_created_at")?,
+    })
+}
+
 // ---------- Fahrzeuge ----------
 
 pub fn get_vehicle(conn: &Connection, id: &str) -> Result<Vehicle, ApiError> {
-    conn.query_row("SELECT * FROM vehicles WHERE id = ?1", [id], vehicle_from_row)
-        .map_err(|err| match err {
-            rusqlite::Error::QueryReturnedNoRows => ApiError::not_found("Fahrzeug nicht gefunden"),
-            other => other.into(),
-        })
+    conn.query_row(
+        "SELECT * FROM vehicles WHERE id = ?1",
+        [id],
+        vehicle_from_row,
+    )
+    .map_err(|err| match err {
+        rusqlite::Error::QueryReturnedNoRows => ApiError::not_found("Fahrzeug nicht gefunden"),
+        other => other.into(),
+    })
 }
 
 /// Aktive Fahrzeuge, oberste Priorität zuerst (kleinste Position).
@@ -195,7 +270,9 @@ pub fn list_vehicles(conn: &Connection) -> Result<Vec<Vehicle>, ApiError> {
     Ok(vehicles)
 }
 
-/// Legt ein Fahrzeug an. Neue Fahrzeuge kommen an die Spitze der Liste.
+/// Legt ein Fahrzeug an. Neue Fahrzeuge kommen an die Spitze der Liste. Ein
+/// bereits abgeschlossen angelegtes Fahrzeug erhält im selben Commit seinen
+/// unveränderlichen History-Snapshot.
 pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, ApiError> {
     let customer_name = input.customer_name.trim().to_string();
     let vehicle_name = input.vehicle_name.trim().to_string();
@@ -203,8 +280,9 @@ pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, A
     validate_vehicle_text(&customer_name, &vehicle_name, &license_plate)?;
 
     let id = Uuid::new_v4().to_string();
-    let timestamp = now(conn)?;
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let timestamp = now(&tx)?;
+    tx.execute(
         "INSERT INTO vehicles (
             id, customer_name, vehicle_name, license_plate,
             tuv_required, parts_ordered, parts_arrived, is_done,
@@ -225,6 +303,10 @@ pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, A
             timestamp,
         ],
     )?;
+    if input.is_done {
+        insert_vehicle_history_snapshot(&tx, &id, &timestamp)?;
+    }
+    tx.commit()?;
     get_vehicle(conn, &id)
 }
 
@@ -259,15 +341,90 @@ pub fn update_vehicle(
     get_vehicle(conn, id)
 }
 
-/// Schaltet genau ein Statusfeld um. Andere Status bleiben unberührt.
+fn get_vehicle_history_by_source(
+    conn: &Connection,
+    source_vehicle_id: &str,
+) -> Result<Option<VehicleHistory>, ApiError> {
+    Ok(conn
+        .query_row(
+            "SELECT * FROM vehicle_history WHERE source_vehicle_id = ?1",
+            [source_vehicle_id],
+            vehicle_history_from_row,
+        )
+        .optional()?)
+}
+
+/// Fügt den Snapshot nur dann ein, wenn er noch nicht existiert. Die Prüfung
+/// und der INSERT laufen in derselben Transaktion wie der Statuswechsel.
+fn insert_vehicle_history_snapshot(
+    conn: &Connection,
+    source_vehicle_id: &str,
+    timestamp: &str,
+) -> Result<(), ApiError> {
+    if get_vehicle_history_by_source(conn, source_vehicle_id)?.is_some() {
+        return Ok(());
+    }
+    let vehicle = get_vehicle(conn, source_vehicle_id)?;
+    if !vehicle.is_done {
+        return Err(ApiError::validation(
+            "isDone",
+            "Nur abgeschlossene Fahrzeuge können in die Historie übernommen werden",
+        ));
+    }
+
+    conn.execute(
+        "INSERT OR IGNORE INTO vehicle_history (
+            id, source_vehicle_id, customer_name, vehicle_name, license_plate,
+            tuv_required, parts_ordered, parts_arrived, is_done, completed_at,
+            archived_at, vehicle_created_at, snapshot_created_at
+         )
+         SELECT ?1, id, customer_name, vehicle_name, license_plate,
+                tuv_required, parts_ordered, parts_arrived, is_done, ?3,
+                archived_at, created_at, ?3
+         FROM vehicles WHERE id = ?2",
+        params![Uuid::new_v4().to_string(), source_vehicle_id, timestamp],
+    )?;
+    Ok(())
+}
+
+/// Erzeugt explizit einen idempotenten History-Snapshot. Ein unbekanntes oder
+/// noch nicht abgeschlossenes Fahrzeug wird backendseitig abgelehnt.
+pub fn create_vehicle_history_snapshot(
+    conn: &Connection,
+    source_vehicle_id: &str,
+) -> Result<VehicleHistory, ApiError> {
+    let tx = conn.unchecked_transaction()?;
+    let timestamp = now(&tx)?;
+    insert_vehicle_history_snapshot(&tx, source_vehicle_id, &timestamp)?;
+    let history = get_vehicle_history_by_source(&tx, source_vehicle_id)?
+        .ok_or_else(|| ApiError::database("Fahrzeughistorie konnte nicht erstellt werden"))?;
+    tx.commit()?;
+    Ok(history)
+}
+
+/// Abgeschlossene Fahrzeuge, jüngster Abschluss zuerst.
+pub fn list_completed_vehicle_history(conn: &Connection) -> Result<Vec<VehicleHistory>, ApiError> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM vehicle_history
+         ORDER BY completed_at DESC, snapshot_created_at DESC, id ASC",
+    )?;
+    let history = stmt
+        .query_map([], vehicle_history_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(history)
+}
+
+/// Schaltet genau ein Statusfeld um. Andere Status bleiben unberührt. Beim
+/// Setzen von `is_done` wird atomar ein einmaliger Snapshot angelegt.
 pub fn update_vehicle_status(
     conn: &Connection,
     id: &str,
     field: VehicleStatusField,
     value: bool,
 ) -> Result<Vehicle, ApiError> {
-    let timestamp = now(conn)?;
-    let changed = conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let timestamp = now(&tx)?;
+    let changed = tx.execute(
         &format!(
             "UPDATE vehicles SET {} = ?2, updated_at = ?3 WHERE id = ?1",
             field.column()
@@ -277,6 +434,10 @@ pub fn update_vehicle_status(
     if changed == 0 {
         return Err(ApiError::not_found("Fahrzeug nicht gefunden"));
     }
+    if field == VehicleStatusField::IsDone && value {
+        insert_vehicle_history_snapshot(&tx, id, &timestamp)?;
+    }
+    tx.commit()?;
     get_vehicle(conn, id)
 }
 
@@ -284,11 +445,10 @@ pub fn update_vehicle_status(
 /// Die Position entspricht dem Index in der übergebenen Liste.
 pub fn reorder_vehicles(conn: &mut Connection, ids: &[String]) -> Result<Vec<Vehicle>, ApiError> {
     let tx = conn.transaction()?;
-    let timestamp: String = tx.query_row(
-        "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-        [],
-        |row| row.get(0),
-    )?;
+    let timestamp: String =
+        tx.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+            row.get(0)
+        })?;
     for (index, id) in ids.iter().enumerate() {
         let changed = tx.execute(
             "UPDATE vehicles SET position = ?2, updated_at = ?3 WHERE id = ?1",
@@ -303,14 +463,28 @@ pub fn reorder_vehicles(conn: &mut Connection, ids: &[String]) -> Result<Vec<Veh
 }
 
 pub fn archive_vehicle(conn: &Connection, id: &str) -> Result<Vehicle, ApiError> {
-    let timestamp = now(conn)?;
-    let changed = conn.execute(
-        "UPDATE vehicles SET archived_at = ?2, updated_at = ?2 WHERE id = ?1",
-        params![id, timestamp],
+    let tx = conn.unchecked_transaction()?;
+    let current = get_vehicle(&tx, id)?;
+    let archived_at = match current.archived_at {
+        Some(value) => value,
+        None => {
+            let timestamp = now(&tx)?;
+            tx.execute(
+                "UPDATE vehicles
+                 SET archived_at = ?2, updated_at = ?2
+                 WHERE id = ?1 AND archived_at IS NULL",
+                params![id, timestamp],
+            )?;
+            timestamp
+        }
+    };
+    tx.execute(
+        "UPDATE vehicle_history
+         SET archived_at = COALESCE(archived_at, ?2)
+         WHERE source_vehicle_id = ?1",
+        params![id, archived_at],
     )?;
-    if changed == 0 {
-        return Err(ApiError::not_found("Fahrzeug nicht gefunden"));
-    }
+    tx.commit()?;
     get_vehicle(conn, id)
 }
 
@@ -326,14 +500,186 @@ pub fn restore_vehicle(conn: &Connection, id: &str) -> Result<Vehicle, ApiError>
     get_vehicle(conn, id)
 }
 
+// ---------- Kundenvorschläge ----------
+
+/// Führt identische Kundennamen (ohne Beachtung der Groß-/Kleinschreibung)
+/// zusammen und behält den Kontext der zuletzt verwendeten Fahrzeugzeile.
+pub fn list_customer_suggestions(conn: &Connection) -> Result<Vec<CustomerSuggestion>, ApiError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, customer_name, vehicle_name, license_plate,
+                COALESCE(archived_at, updated_at, created_at) AS last_used_at
+         FROM vehicles
+         WHERE trim(customer_name) <> ''
+         UNION ALL
+         SELECT source_vehicle_id AS id, customer_name, vehicle_name, license_plate,
+                completed_at AS last_used_at
+         FROM vehicle_history
+         WHERE trim(customer_name) <> ''",
+    )?;
+    let candidates = stmt
+        .query_map([], |row| {
+            let vehicle_name: String = row.get("vehicle_name")?;
+            let license_plate: String = row.get("license_plate")?;
+            Ok(CustomerSuggestion {
+                id: row.get("id")?,
+                customer_name: row.get::<_, String>("customer_name")?.trim().to_string(),
+                vehicle_name: (!vehicle_name.trim().is_empty())
+                    .then(|| vehicle_name.trim().to_string()),
+                license_plate: (!license_plate.trim().is_empty())
+                    .then(|| license_plate.trim().to_string()),
+                last_used_at: row.get("last_used_at")?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut merged = std::collections::HashMap::<String, CustomerSuggestion>::new();
+    for candidate in candidates {
+        let key = candidate.customer_name.to_lowercase();
+        let replace = merged
+            .get(&key)
+            .map(|current| {
+                candidate.last_used_at > current.last_used_at
+                    || (candidate.last_used_at == current.last_used_at && candidate.id > current.id)
+            })
+            .unwrap_or(true);
+        if replace {
+            merged.insert(key, candidate);
+        }
+    }
+    let mut suggestions: Vec<_> = merged.into_values().collect();
+    suggestions.sort_by(|a, b| {
+        b.last_used_at
+            .cmp(&a.last_used_at)
+            .then_with(|| a.customer_name.cmp(&b.customer_name))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(suggestions)
+}
+
+// ---------- UI-Präferenzen ----------
+
+pub const VEHICLE_COLUMN_ORDER_DEFAULT: [&str; 7] = [
+    "customerName",
+    "vehicleName",
+    "licensePlate",
+    "tuvRequired",
+    "partsOrdered",
+    "partsArrived",
+    "isDone",
+];
+const UI_PREFERENCES_VERSION: i64 = 1;
+
+fn default_vehicle_column_order() -> Vec<String> {
+    VEHICLE_COLUMN_ORDER_DEFAULT
+        .iter()
+        .map(|id| (*id).to_string())
+        .collect()
+}
+
+pub fn normalize_vehicle_column_order(column_order: &[String]) -> Vec<String> {
+    let mut normalized = Vec::with_capacity(VEHICLE_COLUMN_ORDER_DEFAULT.len());
+    for id in column_order {
+        if VEHICLE_COLUMN_ORDER_DEFAULT.contains(&id.as_str()) && !normalized.contains(id) {
+            normalized.push(id.clone());
+        }
+    }
+    if normalized.is_empty() {
+        return default_vehicle_column_order();
+    }
+    for id in VEHICLE_COLUMN_ORDER_DEFAULT {
+        if !normalized.iter().any(|current| current == id) {
+            normalized.push(id.to_string());
+        }
+    }
+    normalized
+}
+
+fn persist_ui_preferences(
+    conn: &Connection,
+    preferences: &UiPreferences,
+) -> Result<UiPreferences, ApiError> {
+    let order = serde_json::to_string(&preferences.vehicle_column_order).map_err(|_| {
+        ApiError::database("Oberflächenpräferenzen konnten nicht gespeichert werden")
+    })?;
+    conn.execute(
+        "INSERT INTO ui_preferences
+            (id, version, payments_panel_collapsed, vehicle_column_order)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+            version = excluded.version,
+            payments_panel_collapsed = excluded.payments_panel_collapsed,
+            vehicle_column_order = excluded.vehicle_column_order",
+        params![
+            UI_PREFERENCES_VERSION,
+            preferences.payments_panel_collapsed,
+            order
+        ],
+    )?;
+    Ok(preferences.clone())
+}
+
+pub fn get_ui_preferences(conn: &Connection) -> Result<UiPreferences, ApiError> {
+    let stored = conn
+        .query_row(
+            "SELECT version, payments_panel_collapsed, vehicle_column_order
+             FROM ui_preferences WHERE id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    let preferences = match stored {
+        Some((UI_PREFERENCES_VERSION, collapsed, json)) => {
+            let parsed = serde_json::from_str::<Vec<String>>(&json).unwrap_or_default();
+            UiPreferences {
+                payments_panel_collapsed: collapsed == 1,
+                vehicle_column_order: normalize_vehicle_column_order(&parsed),
+            }
+        }
+        _ => UiPreferences {
+            payments_panel_collapsed: false,
+            vehicle_column_order: default_vehicle_column_order(),
+        },
+    };
+    persist_ui_preferences(conn, &preferences)
+}
+
+pub fn update_payments_panel_collapsed(
+    conn: &Connection,
+    collapsed: bool,
+) -> Result<UiPreferences, ApiError> {
+    let mut preferences = get_ui_preferences(conn)?;
+    preferences.payments_panel_collapsed = collapsed;
+    persist_ui_preferences(conn, &preferences)
+}
+
+pub fn update_vehicle_column_order(
+    conn: &Connection,
+    column_order: &[String],
+) -> Result<UiPreferences, ApiError> {
+    let mut preferences = get_ui_preferences(conn)?;
+    preferences.vehicle_column_order = normalize_vehicle_column_order(column_order);
+    persist_ui_preferences(conn, &preferences)
+}
+
 // ---------- Zahlungen ----------
 
 pub fn get_payment(conn: &Connection, id: &str) -> Result<Payment, ApiError> {
-    conn.query_row("SELECT * FROM payments WHERE id = ?1", [id], payment_from_row)
-        .map_err(|err| match err {
-            rusqlite::Error::QueryReturnedNoRows => ApiError::not_found("Zahlung nicht gefunden"),
-            other => other.into(),
-        })
+    conn.query_row(
+        "SELECT * FROM payments WHERE id = ?1",
+        [id],
+        payment_from_row,
+    )
+    .map_err(|err| match err {
+        rusqlite::Error::QueryReturnedNoRows => ApiError::not_found("Zahlung nicht gefunden"),
+        other => other.into(),
+    })
 }
 
 /// Offene Zahlungen: weder bezahlt noch archiviert, älteste zuerst.
@@ -455,14 +801,53 @@ mod tests {
         assert!(tables.contains(&"vehicles".to_string()));
         assert!(tables.contains(&"payments".to_string()));
         assert!(tables.contains(&"hidden_entries".to_string()));
+        assert!(tables.contains(&"vehicle_history".to_string()));
+        assert!(tables.contains(&"hidden_entry_history".to_string()));
+        assert!(tables.contains(&"ui_preferences".to_string()));
+    }
+
+    #[test]
+    fn migration_uebernimmt_bereits_abgeschlossene_fahrzeuge_einmalig() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0]).unwrap();
+        conn.execute_batch(MIGRATIONS[1]).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute(
+            "INSERT INTO vehicles (
+                id, customer_name, vehicle_name, license_plate,
+                tuv_required, parts_ordered, parts_arrived, is_done,
+                position, created_at, updated_at, archived_at
+             ) VALUES (
+                'alt-fertig', 'Alt', 'Golf', 'M-A 1',
+                1, 1, 1, 1, 0,
+                '2024-01-01T00:00:00.000Z', '2024-02-01T00:00:00.000Z',
+                '2024-03-01T00:00:00.000Z'
+             )",
+            [],
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+        let rows = list_completed_vehicle_history(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source_vehicle_id, "alt-fertig");
+        assert_eq!(rows[0].completed_at, "2024-02-01T00:00:00.000Z");
+        assert_eq!(
+            rows[0].archived_at.as_deref(),
+            Some("2024-03-01T00:00:00.000Z")
+        );
+        migrate(&mut conn).unwrap();
+        assert_eq!(list_completed_vehicle_history(&conn).unwrap().len(), 1);
     }
 
     #[test]
     fn fahrzeug_anlegen_normalisiert_und_validiert() {
         let conn = test_conn();
-        let vehicle =
-            create_vehicle(&conn, vehicle_input("  Müller, Anna ", " VW Golf ", "  m  ab 1234 "))
-                .unwrap();
+        let vehicle = create_vehicle(
+            &conn,
+            vehicle_input("  Müller, Anna ", " VW Golf ", "  m  ab 1234 "),
+        )
+        .unwrap();
         assert_eq!(vehicle.customer_name, "Müller, Anna");
         assert_eq!(vehicle.vehicle_name, "VW Golf");
         assert_eq!(vehicle.license_plate, "M AB 1234");
@@ -525,7 +910,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.code, ErrorCode::Validation);
-        assert_eq!(get_vehicle(&conn, &vehicle.id).unwrap().customer_name, "Neu");
+        assert_eq!(
+            get_vehicle(&conn, &vehicle.id).unwrap().customer_name,
+            "Neu"
+        );
 
         let err = update_vehicle(&conn, "fehlt", VehiclePatch::default()).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
@@ -604,6 +992,251 @@ mod tests {
 
         let err = archive_vehicle(&conn, "fehlt").unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn fahrzeughistorie_ist_atomar_idempotent_und_unveraenderlich() {
+        let conn = test_conn();
+        let vehicle = create_vehicle(&conn, vehicle_input("Kunde", "Golf", "M-A 1")).unwrap();
+
+        // Ein Fehler beim History-INSERT muss auch den Statuswechsel zurückrollen.
+        conn.execute_batch(
+            "CREATE TRIGGER fail_vehicle_history
+             BEFORE INSERT ON vehicle_history
+             BEGIN SELECT RAISE(ABORT, 'test'); END;",
+        )
+        .unwrap();
+        assert!(
+            update_vehicle_status(&conn, &vehicle.id, VehicleStatusField::IsDone, true).is_err()
+        );
+        assert!(!get_vehicle(&conn, &vehicle.id).unwrap().is_done);
+        conn.execute_batch("DROP TRIGGER fail_vehicle_history;")
+            .unwrap();
+
+        update_vehicle_status(&conn, &vehicle.id, VehicleStatusField::IsDone, true).unwrap();
+        let first = create_vehicle_history_snapshot(&conn, &vehicle.id).unwrap();
+        let again = create_vehicle_history_snapshot(&conn, &vehicle.id).unwrap();
+        assert_eq!(first, again);
+        assert_eq!(list_completed_vehicle_history(&conn).unwrap().len(), 1);
+
+        // Spätere Änderungen und erneutes Abschließen verändern den fachlichen
+        // Snapshot nicht.
+        update_vehicle(
+            &conn,
+            &vehicle.id,
+            VehiclePatch {
+                customer_name: Some("Geändert".to_string()),
+                vehicle_name: Some("Passat".to_string()),
+                license_plate: Some("B-Z 9".to_string()),
+            },
+        )
+        .unwrap();
+        update_vehicle_status(&conn, &vehicle.id, VehicleStatusField::PartsOrdered, true).unwrap();
+        update_vehicle_status(&conn, &vehicle.id, VehicleStatusField::IsDone, false).unwrap();
+        update_vehicle_status(&conn, &vehicle.id, VehicleStatusField::IsDone, true).unwrap();
+        assert_eq!(
+            create_vehicle_history_snapshot(&conn, &vehicle.id).unwrap(),
+            first
+        );
+
+        // Nur das einmalige Archiv-Metadatum wird nachgetragen und bleibt auch
+        // bei wiederholtem Archivieren sowie Wiederherstellen erhalten.
+        let archived = archive_vehicle(&conn, &vehicle.id).unwrap();
+        let archived_at = archived.archived_at.clone().unwrap();
+        let history = &list_completed_vehicle_history(&conn).unwrap()[0];
+        assert_eq!(history.archived_at.as_deref(), Some(archived_at.as_str()));
+        assert_eq!(history.customer_name, first.customer_name);
+        assert_eq!(history.vehicle_name, first.vehicle_name);
+        assert_eq!(history.license_plate, first.license_plate);
+        assert_eq!(history.parts_ordered, first.parts_ordered);
+        assert_eq!(
+            archive_vehicle(&conn, &vehicle.id).unwrap().archived_at,
+            Some(archived_at.clone())
+        );
+        restore_vehicle(&conn, &vehicle.id).unwrap();
+        assert_eq!(
+            list_completed_vehicle_history(&conn).unwrap()[0]
+                .archived_at
+                .as_deref(),
+            Some(archived_at.as_str())
+        );
+    }
+
+    #[test]
+    fn abgeschlossenes_fahrzeug_bekommt_bereits_beim_anlegen_einen_snapshot() {
+        let conn = test_conn();
+        let mut input = vehicle_input("Direkt", "Corsa", "");
+        input.is_done = true;
+        let vehicle = create_vehicle(&conn, input).unwrap();
+        let rows = list_completed_vehicle_history(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source_vehicle_id, vehicle.id);
+        assert_eq!(rows[0].customer_name, "Direkt");
+
+        // Auch beim Anlegen ist Fahrzeug + Snapshot ein Commit.
+        conn.execute_batch(
+            "CREATE TRIGGER fail_vehicle_history_create
+             BEFORE INSERT ON vehicle_history
+             BEGIN SELECT RAISE(ABORT, 'test'); END;",
+        )
+        .unwrap();
+        let mut failing = vehicle_input("Rollback", "Golf", "");
+        failing.is_done = true;
+        assert!(create_vehicle(&conn, failing).is_err());
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM vehicles WHERE customer_name = 'Rollback'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn fahrzeughistorie_hat_stabile_sortierung() {
+        let conn = test_conn();
+        let mut ids = Vec::new();
+        for customer in ["A", "B", "C"] {
+            let mut input = vehicle_input(customer, "Golf", "");
+            input.is_done = true;
+            let vehicle = create_vehicle(&conn, input).unwrap();
+            ids.push(
+                create_vehicle_history_snapshot(&conn, &vehicle.id)
+                    .unwrap()
+                    .id,
+            );
+        }
+        conn.execute(
+            "UPDATE vehicle_history
+             SET completed_at = '2025-01-01T10:00:00.000Z',
+                 snapshot_created_at = '2025-01-01T10:00:00.000Z'",
+            [],
+        )
+        .unwrap();
+        ids.sort();
+        let first = list_completed_vehicle_history(&conn).unwrap();
+        let second = list_completed_vehicle_history(&conn).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.into_iter().map(|row| row.id).collect::<Vec<_>>(), ids);
+    }
+
+    #[test]
+    fn ui_preferences_reparieren_ungueltige_werte_und_bleiben_persistent() {
+        let conn = test_conn();
+        let default = get_ui_preferences(&conn).unwrap();
+        assert!(!default.payments_panel_collapsed);
+        assert_eq!(default.vehicle_column_order, default_vehicle_column_order());
+
+        let order = vec![
+            "isDone".to_string(),
+            "unbekannt".to_string(),
+            "isDone".to_string(),
+            "customerName".to_string(),
+        ];
+        let updated = update_vehicle_column_order(&conn, &order).unwrap();
+        assert_eq!(updated.vehicle_column_order[0], "isDone");
+        assert_eq!(updated.vehicle_column_order[1], "customerName");
+        assert_eq!(
+            updated.vehicle_column_order.len(),
+            VEHICLE_COLUMN_ORDER_DEFAULT.len()
+        );
+        assert!(!updated
+            .vehicle_column_order
+            .contains(&"unbekannt".to_string()));
+        assert!(
+            update_payments_panel_collapsed(&conn, true)
+                .unwrap()
+                .payments_panel_collapsed
+        );
+        assert!(get_ui_preferences(&conn).unwrap().payments_panel_collapsed);
+
+        // Beschädigte/neuere persistierte Werte fallen auf einen validierten
+        // Default zurück und werden direkt repariert.
+        conn.execute(
+            "UPDATE ui_preferences
+             SET version = 999, payments_panel_collapsed = 7,
+                 vehicle_column_order = 'kein-json'
+             WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        let repaired = get_ui_preferences(&conn).unwrap();
+        assert_eq!(repaired, default);
+        let stored: (i64, i64, String) = conn
+            .query_row(
+                "SELECT version, payments_panel_collapsed, vehicle_column_order
+                 FROM ui_preferences WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stored.0, UI_PREFERENCES_VERSION);
+        assert_eq!(stored.1, 0);
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(&stored.2).unwrap(),
+            default.vehicle_column_order
+        );
+    }
+
+    #[test]
+    fn kundenvorschlaege_stammen_nur_aus_fahrzeugen_und_fahrzeughistorie() {
+        let conn = test_conn();
+        let vehicle = create_vehicle(&conn, vehicle_input("Anna", "Golf", "M-A 1")).unwrap();
+        update_vehicle_status(&conn, &vehicle.id, VehicleStatusField::IsDone, true).unwrap();
+        update_vehicle(
+            &conn,
+            &vehicle.id,
+            VehiclePatch {
+                customer_name: Some("ANNA".to_string()),
+                vehicle_name: Some("Passat".to_string()),
+                license_plate: Some("M-B 2".to_string()),
+            },
+        )
+        .unwrap();
+        create_vehicle(&conn, vehicle_input("Berta", "Corsa", "M-C 3")).unwrap();
+        create_payment(
+            &conn,
+            NewPayment {
+                customer_name: "Nur Zahlung".to_string(),
+                amount_cents: 100,
+                note: String::new(),
+            },
+        )
+        .unwrap();
+        // Eine reine History-Zeile simuliert einen inzwischen entfernten
+        // Fahrzeugbestand und muss weiterhin Vorschläge liefern.
+        conn.execute(
+            "INSERT INTO vehicle_history (
+                id, source_vehicle_id, customer_name, vehicle_name, license_plate,
+                tuv_required, parts_ordered, parts_arrived, is_done, completed_at,
+                archived_at, vehicle_created_at, snapshot_created_at
+             ) VALUES (
+                'history-only', 'deleted-source', 'Historie', 'Kadett', 'M-H 4',
+                0, 0, 0, 1, '2030-01-01T00:00:00.000Z', NULL,
+                '2020-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let suggestions = list_customer_suggestions(&conn).unwrap();
+        assert_eq!(
+            suggestions
+                .iter()
+                .filter(|item| item.customer_name.eq_ignore_ascii_case("anna"))
+                .count(),
+            1
+        );
+        assert!(suggestions.iter().any(|item| item.customer_name == "Berta"));
+        assert!(suggestions
+            .iter()
+            .any(|item| item.customer_name == "Historie"));
+        assert!(!suggestions
+            .iter()
+            .any(|item| item.customer_name == "Nur Zahlung"));
+        assert_eq!(suggestions[0].customer_name, "Historie");
+        assert_eq!(suggestions[0].vehicle_name.as_deref(), Some("Kadett"));
     }
 
     #[test]
@@ -726,7 +1359,9 @@ mod tests {
         {
             let tx = conn.transaction().unwrap();
             let timestamp: String = tx
-                .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| row.get(0))
+                .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             for index in 0..1250 {
                 let archived_at: Option<&String> =

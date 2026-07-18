@@ -620,3 +620,260 @@ input {
 .undo-bar-action:hover {
   background: var(--color-primary-soft);
 }
+
+/* ---------- Verschiebbare Fahrzeugspalten ---------- */
+
+.column-drag-handle {
+  width: 100%;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: inherit;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: grab;
+}
+
+.th-center .column-drag-handle {
+  justify-content: center;
+}
+
+.column-drag-handle:active {
+  cursor: grabbing;
+}
+
+.column-drag-dots {
+  color: var(--color-border-strong);
+  letter-spacing: -3px;
+}
+
+.vehicle-table thead th.is-column-dragging {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.vehicle-table thead th.is-column-drop-before {
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.vehicle-table thead th.is-column-drop-after {
+  box-shadow: inset -3px 0 0 var(--color-primary);
+}
+
+/* ---------- Minimierte Zahlungen ---------- */
+
+.payments-panel.is-collapsed {
+  max-height: none;
+  min-height: 58px;
+  padding: var(--space-1) var(--space-2);
+  justify-content: center;
+}
+
+.payments-expand {
+  margin-left: auto;
+}
+
+.payments-collapse {
+  flex: none;
+}
+
+/* ---------- Kunden-Autocomplete ---------- */
+
+.customer-autocomplete {
+  position: relative;
+}
+
+.customer-suggestions {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  min-width: 230px;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+}
+
+.customer-suggestion {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px var(--space-1);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.customer-suggestion:hover,
+.customer-suggestion.is-active {
+  background: var(--color-primary-soft);
+}
+
+.customer-suggestion small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* ---------- Inline-Historienarbeitsansicht ---------- */
+
+.history-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.history-toolbar {
+  flex: none;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.history-toolbar h2,
+.history-toolbar p {
+  margin: 0;
+}
+
+.history-toolbar h2 {
+  font-size: var(--font-size-title);
+}
+
+.history-toolbar p {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.history-search {
+  flex: 1;
+  max-width: 380px;
+  margin-left: auto;
+}
+
+.history-search input {
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.history-tables {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.history-tables.is-public {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.history-group {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.history-group-heading {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.history-group-heading h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+.history-group-heading span {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-table-wrap {
+  min-height: 0;
+  overflow: auto;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-caption);
+}
+
+.history-table th,
+.history-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.history-table th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.history-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.history-money {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-empty,
+.history-state {
+  color: var(--color-text-muted);
+  text-align: center !important;
+}
+
+.history-state {
+  align-self: center;
+  margin: var(--space-4);
+}
+
+@media (max-width: 1180px) {
+  .history-toolbar p {
+    display: none;
+  }
+
+  .history-search {
+    max-width: 280px;
+  }
+}

@@ -1,9 +1,21 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { ApiError, HiddenEntry, Payment, Vehicle } from "../types";
+import type {
+  ApiError,
+  CustomerSuggestion,
+  HiddenEntry,
+  Payment,
+  SecretHistoryEntry,
+  UiPreferences,
+  Vehicle,
+  VehicleColumnId,
+  VehicleHistory,
+} from "../types";
+import { VEHICLE_COLUMN_IDS } from "../types";
 
 /**
  * In-Memory-Nachbildung des Rust-Backends für Frontend-Tests.
- * Semantik (Validierung, Normalisierung, Positionen) entspricht src-tauri/src/db.rs.
+ * Sie bildet insbesondere die Session-Grenze des Secret-Bereichs, unveränderliche
+ * Historien, persistente UI-Präferenzen und Backup-Restores ab.
  */
 
 export interface VehicleSeed {
@@ -28,29 +40,29 @@ export interface HiddenSeed {
   note?: string;
 }
 
-/** Zustand der Fake-Datenbank für Backup-Snapshots. */
 interface Snapshot {
   createdAt: string;
   vehicles: Vehicle[];
+  vehicleHistory: VehicleHistory[];
   payments: Payment[];
   hiddenEntries: HiddenEntry[];
+  secretHistory: SecretHistoryEntry[];
+  preferences: UiPreferences;
 }
 
 export interface FakeBackend {
-  /** Alle Fahrzeuge inklusive archivierter. */
   vehicles: Vehicle[];
-  /** Alle Zahlungen inklusive bezahlter. */
+  vehicleHistory: VehicleHistory[];
   payments: Payment[];
-  /** Alle versteckten Einträge inklusive archivierter (im Fake im Klartext –
-   *  die echte Verschlüsselung ist im Rust-Backend getestet). */
+  /** Im Fake Klartext; die echte Verschlüsselung wird in Rust getestet. */
   hiddenEntries: HiddenEntry[];
-  /** Erstellte Backups (Snapshots) in Reihenfolge. */
+  secretHistory: SecretHistoryEntry[];
+  preferences: UiPreferences;
   backups: Snapshot[];
-  /** Aufgerufene Commands in Reihenfolge. */
   calls: string[];
-  /** Lässt den nächsten Aufruf des Commands mit einem Fehler scheitern. */
+  callPayloads: Array<{ cmd: string; payload: Record<string, unknown> }>;
+  activeSessionTokens: Set<string>;
   planFailure: (cmd: string, error?: ApiError) => void;
-  /** Simuliert einen abgebrochenen nativen Dialog für den nächsten Aufruf. */
   planCancel: (cmd: "create_backup" | "prepare_restore") => void;
 }
 
@@ -93,15 +105,32 @@ function validateHiddenValues(name: string, amountCents: number) {
   }
 }
 
+function normalizeColumnOrder(input: readonly string[]): VehicleColumnId[] {
+  const known = new Set<string>();
+  const normalized: VehicleColumnId[] = [];
+  for (const id of input) {
+    if ((VEHICLE_COLUMN_IDS as readonly string[]).includes(id) && !known.has(id)) {
+      known.add(id);
+      normalized.push(id as VehicleColumnId);
+    }
+  }
+  if (normalized.length === 0) return [...VEHICLE_COLUMN_IDS];
+  for (const id of VEHICLE_COLUMN_IDS) {
+    if (!known.has(id)) normalized.push(id);
+  }
+  return normalized;
+}
+
 export function installFakeBackend(seed?: {
   vehicles?: VehicleSeed[];
   payments?: PaymentSeed[];
   hidden?: HiddenSeed[];
-  /** Simuliert einen Fehlerzustand der Schlüsselverwaltung. */
   hiddenError?: ApiError;
+  uiPreferences?: Partial<UiPreferences>;
 }): FakeBackend {
   let idCounter = 0;
   let clock = 0;
+  let sessionCounter = 0;
   const nextId = (prefix: string) => `${prefix}-${++idCounter}`;
   const nextTimestamp = () => new Date(1700000000000 + ++clock * 1000).toISOString();
 
@@ -122,6 +151,27 @@ export function installFakeBackend(seed?: {
       archivedAt: null,
     };
   });
+
+  const vehicleHistory: VehicleHistory[] = [];
+  for (const vehicle of vehicles) {
+    if (vehicle.isDone) {
+      vehicleHistory.push({
+        id: nextId("vh"),
+        sourceVehicleId: vehicle.id,
+        customerName: vehicle.customerName,
+        vehicleName: vehicle.vehicleName,
+        licensePlate: vehicle.licensePlate,
+        tuvRequired: vehicle.tuvRequired,
+        partsOrdered: vehicle.partsOrdered,
+        partsArrived: vehicle.partsArrived,
+        isDone: true,
+        completedAt: vehicle.updatedAt,
+        archivedAt: vehicle.archivedAt,
+        vehicleCreatedAt: vehicle.createdAt,
+        snapshotCreatedAt: vehicle.updatedAt,
+      });
+    }
+  }
 
   const payments: Payment[] = (seed?.payments ?? []).map((entry) => {
     const timestamp = nextTimestamp();
@@ -149,68 +199,49 @@ export function installFakeBackend(seed?: {
       archivedAt: null,
     };
   });
+  const secretHistory: SecretHistoryEntry[] = [];
+
+  const preferences: UiPreferences = {
+    paymentsPanelCollapsed: seed?.uiPreferences?.paymentsPanelCollapsed ?? false,
+    vehicleColumnOrder: normalizeColumnOrder(seed?.uiPreferences?.vehicleColumnOrder ?? []),
+  };
 
   const backups: Snapshot[] = [];
   let stagedRestore: Snapshot | null = null;
-
   const calls: string[] = [];
+  const callPayloads: Array<{ cmd: string; payload: Record<string, unknown> }> = [];
   const failures = new Map<string, ApiError>();
   const cancels = new Set<string>();
+  const activeSessionTokens = new Set<string>();
 
   function requireHiddenAccess() {
-    if (seed?.hiddenError) {
-      throw seed.hiddenError;
+    if (seed?.hiddenError) throw seed.hiddenError;
+  }
+
+  function requireSession(args: Record<string, unknown>): string {
+    const token = typeof args.sessionToken === "string" ? args.sessionToken : "";
+    if (token === "" || !activeSessionTokens.has(token)) {
+      throw validationError("sessionToken", "Secret-Sitzung ist ungültig oder beendet");
     }
-  }
-
-  function findHiddenEntry(id: string): HiddenEntry {
-    const entry = hiddenEntries.find((item) => item.id === id);
-    if (!entry) {
-      throw notFound("Eintrag nicht gefunden");
-    }
-    return entry;
-  }
-
-  function listHiddenEntries(): HiddenEntry[] {
-    return hiddenEntries
-      .filter((entry) => entry.archivedAt === null)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map((entry) => ({ ...entry }));
-  }
-
-  function takeSnapshot(): Snapshot {
-    return {
-      createdAt: nextTimestamp(),
-      vehicles: vehicles.map((entry) => ({ ...entry })),
-      payments: payments.map((entry) => ({ ...entry })),
-      hiddenEntries: hiddenEntries.map((entry) => ({ ...entry })),
-    };
-  }
-
-  function applySnapshot(snapshot: Snapshot) {
-    vehicles.splice(0, vehicles.length, ...snapshot.vehicles.map((entry) => ({ ...entry })));
-    payments.splice(0, payments.length, ...snapshot.payments.map((entry) => ({ ...entry })));
-    hiddenEntries.splice(
-      0,
-      hiddenEntries.length,
-      ...snapshot.hiddenEntries.map((entry) => ({ ...entry })),
-    );
+    return token;
   }
 
   function findVehicle(id: string): Vehicle {
     const vehicle = vehicles.find((entry) => entry.id === id);
-    if (!vehicle) {
-      throw notFound("Fahrzeug nicht gefunden");
-    }
+    if (!vehicle) throw notFound("Fahrzeug nicht gefunden");
     return vehicle;
   }
 
   function findPayment(id: string): Payment {
     const payment = payments.find((entry) => entry.id === id);
-    if (!payment) {
-      throw notFound("Zahlung nicht gefunden");
-    }
+    if (!payment) throw notFound("Zahlung nicht gefunden");
     return payment;
+  }
+
+  function findHiddenEntry(id: string): HiddenEntry {
+    const entry = hiddenEntries.find((item) => item.id === id);
+    if (!entry) throw notFound("Eintrag nicht gefunden");
+    return entry;
   }
 
   function listVehicles(): Vehicle[] {
@@ -227,14 +258,142 @@ export function installFakeBackend(seed?: {
       .map((entry) => ({ ...entry }));
   }
 
+  function listHiddenEntries(): HiddenEntry[] {
+    return hiddenEntries
+      .filter((entry) => entry.archivedAt === null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((entry) => ({ ...entry }));
+  }
+
+  function ensureVehicleHistory(vehicle: Vehicle, completedAt: string): VehicleHistory {
+    const existing = vehicleHistory.find((item) => item.sourceVehicleId === vehicle.id);
+    if (existing) return existing;
+    const snapshot: VehicleHistory = {
+      id: nextId("vh"),
+      sourceVehicleId: vehicle.id,
+      customerName: vehicle.customerName,
+      vehicleName: vehicle.vehicleName,
+      licensePlate: vehicle.licensePlate,
+      tuvRequired: vehicle.tuvRequired,
+      partsOrdered: vehicle.partsOrdered,
+      partsArrived: vehicle.partsArrived,
+      isDone: true,
+      completedAt,
+      archivedAt: vehicle.archivedAt,
+      vehicleCreatedAt: vehicle.createdAt,
+      snapshotCreatedAt: completedAt,
+    };
+    vehicleHistory.push(snapshot);
+    return snapshot;
+  }
+
+  function ensureSecretHistory(entry: HiddenEntry, archivedAt: string): SecretHistoryEntry {
+    const existing = secretHistory.find((item) => item.sourceHiddenEntryId === entry.id);
+    if (existing) return existing;
+    const snapshot: SecretHistoryEntry = {
+      id: nextId("sh"),
+      sourceHiddenEntryId: entry.id,
+      name: entry.name,
+      amountCents: entry.amountCents,
+      note: entry.note,
+      completedOrArchivedAt: archivedAt,
+      completedAt: archivedAt,
+      createdAt: archivedAt,
+    };
+    secretHistory.push(snapshot);
+    return snapshot;
+  }
+
+  function listSuggestions(): CustomerSuggestion[] {
+    const candidates: CustomerSuggestion[] = [
+      ...vehicles
+        .filter((vehicle) => vehicle.customerName.trim() !== "")
+        .map((vehicle) => ({
+          id: vehicle.id,
+          customerName: vehicle.customerName.trim(),
+          vehicleName: vehicle.vehicleName.trim() || null,
+          licensePlate: vehicle.licensePlate.trim() || null,
+          lastUsedAt: vehicle.archivedAt ?? vehicle.updatedAt ?? vehicle.createdAt,
+        })),
+      ...vehicleHistory
+        .filter((history) => history.customerName.trim() !== "")
+        .map((history) => ({
+          id: history.sourceVehicleId,
+          customerName: history.customerName.trim(),
+          vehicleName: history.vehicleName.trim() || null,
+          licensePlate: history.licensePlate.trim() || null,
+          lastUsedAt: history.completedAt,
+        })),
+    ];
+    const merged = new Map<string, CustomerSuggestion>();
+    for (const candidate of candidates) {
+      const key = candidate.customerName.toLocaleLowerCase("de-DE");
+      const current = merged.get(key);
+      if (
+        !current ||
+        candidate.lastUsedAt > current.lastUsedAt ||
+        (candidate.lastUsedAt === current.lastUsedAt && candidate.id > current.id)
+      ) {
+        merged.set(key, candidate);
+      }
+    }
+    return [...merged.values()]
+      .sort(
+        (a, b) =>
+          b.lastUsedAt.localeCompare(a.lastUsedAt) ||
+          a.customerName.localeCompare(b.customerName, "de-DE") ||
+          a.id.localeCompare(b.id),
+      )
+      .map((item) => ({ ...item }));
+  }
+
+  function cloneSnapshot(snapshot: Snapshot): Snapshot {
+    return {
+      createdAt: snapshot.createdAt,
+      vehicles: snapshot.vehicles.map((item) => ({ ...item })),
+      vehicleHistory: snapshot.vehicleHistory.map((item) => ({ ...item })),
+      payments: snapshot.payments.map((item) => ({ ...item })),
+      hiddenEntries: snapshot.hiddenEntries.map((item) => ({ ...item })),
+      secretHistory: snapshot.secretHistory.map((item) => ({ ...item })),
+      preferences: {
+        paymentsPanelCollapsed: snapshot.preferences.paymentsPanelCollapsed,
+        vehicleColumnOrder: [...snapshot.preferences.vehicleColumnOrder],
+      },
+    };
+  }
+
+  function takeSnapshot(): Snapshot {
+    return cloneSnapshot({
+      createdAt: nextTimestamp(),
+      vehicles,
+      vehicleHistory,
+      payments,
+      hiddenEntries,
+      secretHistory,
+      preferences,
+    });
+  }
+
+  function applySnapshot(snapshot: Snapshot) {
+    const copy = cloneSnapshot(snapshot);
+    vehicles.splice(0, vehicles.length, ...copy.vehicles);
+    vehicleHistory.splice(0, vehicleHistory.length, ...copy.vehicleHistory);
+    payments.splice(0, payments.length, ...copy.payments);
+    hiddenEntries.splice(0, hiddenEntries.length, ...copy.hiddenEntries);
+    secretHistory.splice(0, secretHistory.length, ...copy.secretHistory);
+    preferences.paymentsPanelCollapsed = copy.preferences.paymentsPanelCollapsed;
+    preferences.vehicleColumnOrder = copy.preferences.vehicleColumnOrder;
+  }
+
   mockIPC((cmd, payload) => {
     calls.push(cmd);
+    const args = (payload ?? {}) as Record<string, unknown>;
+    callPayloads.push({ cmd, payload: { ...args } });
     const planned = failures.get(cmd);
     if (planned) {
       failures.delete(cmd);
       throw planned;
     }
-    const args = (payload ?? {}) as Record<string, unknown>;
 
     switch (cmd) {
       case "list_vehicles":
@@ -261,6 +420,7 @@ export function installFakeBackend(seed?: {
           archivedAt: null,
         };
         vehicles.push(vehicle);
+        if (vehicle.isDone) ensureVehicleHistory(vehicle, timestamp);
         return { ...vehicle };
       }
       case "update_vehicle": {
@@ -290,8 +450,48 @@ export function installFakeBackend(seed?: {
           | "isDone";
         vehicle[field] = Boolean(args.value);
         vehicle.updatedAt = nextTimestamp();
+        if (field === "isDone" && vehicle.isDone) ensureVehicleHistory(vehicle, vehicle.updatedAt);
         return { ...vehicle };
       }
+      case "create_vehicle_history_snapshot": {
+        const vehicle = findVehicle(String(args.id));
+        if (!vehicle.isDone) {
+          throw validationError(
+            "isDone",
+            "Nur abgeschlossene Fahrzeuge können in die Historie übernommen werden",
+          );
+        }
+        return { ...ensureVehicleHistory(vehicle, nextTimestamp()) };
+      }
+      case "list_completed_vehicle_history":
+        return vehicleHistory
+          .slice()
+          .sort(
+            (a, b) =>
+              b.completedAt.localeCompare(a.completedAt) ||
+              b.snapshotCreatedAt.localeCompare(a.snapshotCreatedAt) ||
+              a.id.localeCompare(b.id),
+          )
+          .map((item) => ({ ...item }));
+      case "list_customer_suggestions":
+        return listSuggestions();
+      case "get_ui_preferences":
+        return {
+          paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+        };
+      case "update_payments_panel_collapsed":
+        preferences.paymentsPanelCollapsed = Boolean(args.collapsed);
+        return {
+          paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+        };
+      case "update_vehicle_column_order":
+        preferences.vehicleColumnOrder = normalizeColumnOrder(args.columnOrder as string[]);
+        return {
+          paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+        };
       case "reorder_vehicles": {
         const ids = args.ids as string[];
         ids.forEach((id) => findVehicle(id));
@@ -302,12 +502,16 @@ export function installFakeBackend(seed?: {
       }
       case "archive_vehicle": {
         const vehicle = findVehicle(String(args.id));
-        vehicle.archivedAt = nextTimestamp();
+        vehicle.archivedAt ??= nextTimestamp();
+        vehicle.updatedAt = vehicle.archivedAt;
+        const snapshot = vehicleHistory.find((item) => item.sourceVehicleId === vehicle.id);
+        if (snapshot) snapshot.archivedAt ??= vehicle.archivedAt;
         return { ...vehicle };
       }
       case "restore_vehicle": {
         const vehicle = findVehicle(String(args.id));
         vehicle.archivedAt = null;
+        vehicle.updatedAt = nextTimestamp();
         return { ...vehicle };
       }
       case "list_open_payments":
@@ -353,13 +557,37 @@ export function installFakeBackend(seed?: {
         return { ...payment };
       }
       case "hidden_status":
-        return seed?.hiddenError
-          ? { unlocked: false, error: seed.hiddenError }
-          : { unlocked: true };
+        return seed?.hiddenError ? { unlocked: false, error: seed.hiddenError } : { unlocked: true };
+      case "begin_secret_session": {
+        requireHiddenAccess();
+        const token = `secret-session-${++sessionCounter}`;
+        activeSessionTokens.add(token);
+        return token;
+      }
+      case "end_secret_session": {
+        const token = requireSession(args);
+        activeSessionTokens.delete(token);
+        return null;
+      }
       case "list_hidden_entries":
+        requireSession(args);
         requireHiddenAccess();
         return listHiddenEntries();
+      case "list_hidden_entry_history":
+      case "list_secret_history":
+        requireSession(args);
+        requireHiddenAccess();
+        return secretHistory
+          .slice()
+          .sort(
+            (a, b) =>
+              b.completedAt.localeCompare(a.completedAt) ||
+              b.createdAt.localeCompare(a.createdAt) ||
+              a.id.localeCompare(b.id),
+          )
+          .map((item) => ({ ...item }));
       case "create_hidden_entry": {
+        requireSession(args);
         requireHiddenAccess();
         const input = args.input as Record<string, unknown>;
         const name = String(input.name ?? "").trim();
@@ -380,6 +608,7 @@ export function installFakeBackend(seed?: {
         return { ...entry };
       }
       case "update_hidden_entry": {
+        requireSession(args);
         requireHiddenAccess();
         const entry = findHiddenEntry(String(args.id));
         const patch = args.patch as Record<string, unknown>;
@@ -391,21 +620,24 @@ export function installFakeBackend(seed?: {
         return { ...entry };
       }
       case "archive_hidden_entry": {
+        requireSession(args);
         requireHiddenAccess();
         const entry = findHiddenEntry(String(args.id));
-        entry.archivedAt = nextTimestamp();
+        entry.archivedAt ??= nextTimestamp();
+        entry.updatedAt = entry.archivedAt;
+        ensureSecretHistory(entry, entry.archivedAt);
         return { ...entry };
       }
       case "restore_hidden_entry": {
+        requireSession(args);
         requireHiddenAccess();
         const entry = findHiddenEntry(String(args.id));
         entry.archivedAt = null;
+        entry.updatedAt = nextTimestamp();
         return { ...entry };
       }
       case "create_backup": {
-        if (cancels.delete(cmd)) {
-          return { saved: false, path: null };
-        }
+        if (cancels.delete(cmd)) return { saved: false, path: null };
         const snapshot = takeSnapshot();
         backups.push(snapshot);
         return { saved: true, path: "/backups/test.werkstattbackup" };
@@ -425,7 +657,7 @@ export function installFakeBackend(seed?: {
         if (!snapshot) {
           throw { code: "backup", message: "Backup-Datei ist ungültig oder beschädigt" };
         }
-        stagedRestore = snapshot;
+        stagedRestore = cloneSnapshot(snapshot);
         return {
           cancelled: false,
           createdAt: snapshot.createdAt,
@@ -443,6 +675,7 @@ export function installFakeBackend(seed?: {
         }
         applySnapshot(stagedRestore);
         stagedRestore = null;
+        activeSessionTokens.clear();
         return null;
       }
       case "cancel_restore":
@@ -455,10 +688,15 @@ export function installFakeBackend(seed?: {
 
   return {
     vehicles,
+    vehicleHistory,
     payments,
     hiddenEntries,
+    secretHistory,
+    preferences,
     backups,
     calls,
+    callPayloads,
+    activeSessionTokens,
     planFailure: (cmd, error) => {
       failures.set(cmd, error ?? { code: "database", message: "Speichern fehlgeschlagen" });
     },

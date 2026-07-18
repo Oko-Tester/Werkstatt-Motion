@@ -4,11 +4,14 @@ import { toApiError } from "./api";
 import { AppShell } from "./components/AppShell";
 import { Header } from "./components/Header";
 import { HiddenPanel } from "./components/HiddenPanel";
+import { HistoryWorkspace } from "./components/HistoryWorkspace";
 import { PaymentsPanel } from "./components/PaymentsPanel";
 import { UndoBar } from "./components/UndoBar";
 import { VehicleTable } from "./components/VehicleTable";
 import { parseEuroInput } from "./money";
+import { VEHICLE_COLUMN_IDS } from "./types";
 import type {
+  CustomerSuggestion,
   FieldErrors,
   HiddenEntry,
   HiddenEntryDraft,
@@ -17,8 +20,11 @@ import type {
   Payment,
   PaymentDraft,
   PaymentTextField,
+  SecretHistoryEntry,
   Vehicle,
+  VehicleColumnId,
   VehicleDraft,
+  VehicleHistory,
   VehicleStatusField,
   VehicleTextField,
 } from "./types";
@@ -77,10 +83,22 @@ export default function App() {
   const [vehicleDrafts, setVehicleDrafts] = useState<VehicleDraft[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
+  const [customerSuggestions, setCustomerSuggestions] = useState<CustomerSuggestion[]>([]);
+  const [paymentsCollapsed, setPaymentsCollapsed] = useState(false);
+  const [vehicleColumnOrder, setVehicleColumnOrder] = useState<VehicleColumnId[]>([
+    ...VEHICLE_COLUMN_IDS,
+  ]);
   const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [secretSessionToken, setSecretSessionToken] = useState<string | null>(null);
   const [hiddenStatus, setHiddenStatus] = useState<HiddenStatus | null>(null);
   const [hiddenEntries, setHiddenEntries] = useState<HiddenEntry[]>([]);
   const [hiddenDrafts, setHiddenDrafts] = useState<HiddenEntryDraft[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState("");
+  const [vehicleHistory, setVehicleHistory] = useState<VehicleHistory[]>([]);
+  const [secretHistory, setSecretHistory] = useState<SecretHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -103,13 +121,20 @@ export default function App() {
   hiddenEntriesRef.current = hiddenEntries;
   const hiddenDraftsRef = useRef(hiddenDrafts);
   hiddenDraftsRef.current = hiddenDrafts;
+  const secretHistoryRef = useRef(secretHistory);
+  secretHistoryRef.current = secretHistory;
   const hiddenOpenRef = useRef(hiddenOpen);
   hiddenOpenRef.current = hiddenOpen;
+  const historyOpenRef = useRef(historyOpen);
+  historyOpenRef.current = historyOpen;
+  const secretSessionTokenRef = useRef(secretSessionToken);
+  secretSessionTokenRef.current = secretSessionToken;
   const fieldErrorsRef = useRef(fieldErrors);
   fieldErrorsRef.current = fieldErrors;
 
   const counterRef = useRef(0);
   const creatingRef = useRef(new Set<string>());
+  const secretOpeningRef = useRef(false);
   const orderSnapshotRef = useRef<Vehicle[] | null>(null);
   const reorderTimerRef = useRef<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -119,12 +144,20 @@ export default function App() {
   async function loadCoreData() {
     setLoading(true);
     try {
-      const [vehicleList, paymentList] = await Promise.all([
+      const [vehicleList, paymentList, suggestions, preferences] = await Promise.all([
         api.listVehicles(),
         api.listOpenPayments(),
+        api.listCustomerSuggestions().catch(() => []),
+        api.getUiPreferences().catch(() => ({
+          paymentsPanelCollapsed: false,
+          vehicleColumnOrder: [...VEHICLE_COLUMN_IDS],
+        })),
       ]);
       setVehicles(vehicleList);
       setPayments(paymentList);
+      setCustomerSuggestions(suggestions);
+      setPaymentsCollapsed(preferences.paymentsPanelCollapsed);
+      setVehicleColumnOrder(preferences.vehicleColumnOrder);
       setLoadError(null);
     } catch (err) {
       // Persistenter, nicht blockierender Fehlerzustand mit „Erneut laden“ –
@@ -177,6 +210,55 @@ export default function App() {
     },
     [],
   );
+
+  useEffect(
+    () => () => {
+      const token = secretSessionTokenRef.current;
+      if (token !== null) void api.endSecretSession(token).catch(() => undefined);
+    },
+    [],
+  );
+
+  async function refreshCustomerSuggestions() {
+    try {
+      setCustomerSuggestions(await api.listCustomerSuggestions());
+    } catch {
+      // Vorschläge sind Komfortfunktion; Kernaktionen dürfen nie darauf warten.
+    }
+  }
+
+  function togglePaymentsCollapsed() {
+    const next = !paymentsCollapsed;
+    setPaymentsCollapsed(next);
+    void api.updatePaymentsPanelCollapsed(next).catch((err) => {
+      // Die Oberfläche bleibt für diese Sitzung im gewählten Zustand bedienbar.
+      showNotice(toApiError(err).message);
+    });
+  }
+
+  function changeVehicleColumnOrder(next: VehicleColumnId[]) {
+    const focusedColumn =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement.closest<HTMLElement>("th[data-column-id]")?.dataset.columnId
+        : undefined;
+    setVehicleColumnOrder(next);
+    if (focusedColumn !== undefined) {
+      window.setTimeout(() => {
+        document
+          .querySelector<HTMLButtonElement>(
+            `th[data-column-id="${focusedColumn}"] .column-drag-handle`,
+          )
+          ?.focus();
+      });
+    }
+    void api
+      .updateVehicleColumnOrder(next)
+      .then((preferences) => setVehicleColumnOrder(preferences.vehicleColumnOrder))
+      .catch((err) => {
+        // Ein Persistenzfehler nimmt dem Nutzer nicht die aktuelle Sitzungsanordnung.
+        showNotice(toApiError(err).message);
+      });
+  }
 
   function showUndo(message: string, undo: () => void) {
     counterRef.current += 1;
@@ -272,6 +354,7 @@ export default function App() {
       setVehicleDrafts((prev) => prev.filter((entry) => entry.draftId !== draft.draftId));
       clearFieldError(draft.draftId);
       setVehicles((prev) => [created, ...prev]);
+      void refreshCustomerSuggestions();
     } catch (err) {
       const apiErr = toApiError(err);
       setFieldError(draft.draftId, apiErr.field ?? "customerName", apiErr.message);
@@ -333,6 +416,7 @@ export default function App() {
     try {
       const saved = await api.updateVehicle(id, { [field]: value });
       setVehicles((prev) => prev.map((entry) => (entry.id === id ? saved : entry)));
+      void refreshCustomerSuggestions();
     } catch (err) {
       const apiErr = toApiError(err);
       setVehicles((prev) => prev.map((entry) => (entry.id === id ? previous : entry)));
@@ -359,6 +443,7 @@ export default function App() {
     try {
       const saved = await api.updateVehicleStatus(id, field, value);
       setVehicles((prev) => prev.map((entry) => (entry.id === id ? saved : entry)));
+      if (field === "isDone") void refreshCustomerSuggestions();
     } catch (err) {
       setVehicles((prev) => prev.map((entry) => (entry.id === id ? previous : entry)));
       showNotice(toApiError(err).message);
@@ -427,6 +512,7 @@ export default function App() {
     setVehicles((prev) => prev.filter((entry) => entry.id !== id));
     try {
       await api.archiveVehicle(id);
+      void refreshCustomerSuggestions();
       const name = vehicle.licensePlate || vehicle.customerName || "Fahrzeug";
       showUndo(`${name} archiviert`, () => {
         setUndoState(null);
@@ -442,6 +528,7 @@ export default function App() {
     try {
       await api.restoreVehicle(id);
       setVehicles(await api.listVehicles());
+      void refreshCustomerSuggestions();
     } catch (err) {
       showNotice(toApiError(err).message);
     }
@@ -605,38 +692,138 @@ export default function App() {
   // ---------- Versteckter Bereich ----------
 
   function openHiddenArea() {
-    // Mehrfachauslösung (z. B. weiteres Gedrückthalten) ist wirkungslos.
-    if (hiddenOpenRef.current) {
-      return;
-    }
-    setHiddenOpen(true);
-    void loadHiddenArea();
+    // Mehrfachauslösung während oder nach dem Session-Start ist wirkungslos.
+    if (hiddenOpenRef.current || secretOpeningRef.current) return;
+    secretOpeningRef.current = true;
+    void beginAndLoadSecretArea();
   }
 
-  async function loadHiddenArea() {
+  async function beginAndLoadSecretArea() {
     try {
-      const status = await api.hiddenStatus();
-      setHiddenStatus(status);
-      if (status.unlocked) {
-        setHiddenEntries(await api.listHiddenEntries());
-      } else {
-        setHiddenEntries([]);
+      const token = await api.beginSecretSession();
+      secretSessionTokenRef.current = token;
+      setSecretSessionToken(token);
+      hiddenOpenRef.current = true;
+      setHiddenOpen(true);
+      setHiddenStatus({ unlocked: true });
+      const entries = await api.listHiddenEntries(token);
+      if (secretSessionTokenRef.current === token) {
+        setHiddenEntries(entries);
+        if (historyOpenRef.current) {
+          setSecretHistory([]);
+          void loadHistoryWorkspace();
+        }
       }
     } catch (err) {
+      // Auch ein Schlüssel-/Sessionfehler bleibt als sicherer, gesperrter Zustand sichtbar.
+      if (secretSessionTokenRef.current === null) {
+        hiddenOpenRef.current = true;
+        setHiddenOpen(true);
+      }
       setHiddenStatus({ unlocked: false, error: toApiError(err) });
       setHiddenEntries([]);
+    } finally {
+      secretOpeningRef.current = false;
     }
+  }
+
+  async function reloadHiddenEntries(token = secretSessionTokenRef.current) {
+    if (token === null) return;
+    try {
+      const entries = await api.listHiddenEntries(token);
+      if (secretSessionTokenRef.current === token) {
+        setHiddenStatus({ unlocked: true });
+        setHiddenEntries(entries);
+      }
+    } catch (err) {
+      if (secretSessionTokenRef.current === token) {
+        setHiddenStatus({ unlocked: false, error: toApiError(err) });
+        setHiddenEntries([]);
+      }
+    }
+  }
+
+  function openHistoryWorkspace() {
+    historyOpenRef.current = true;
+    setVehicleHistory([]);
+    setSecretHistory([]);
+    setHistoryOpen(true);
+    setHistorySearch("");
+    void loadHistoryWorkspace();
+  }
+
+  async function loadHistoryWorkspace() {
+    const token = secretSessionTokenRef.current;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const vehiclesResult = await api.listCompletedVehicleHistory();
+      if (!historyOpenRef.current) return;
+      setVehicleHistory(vehiclesResult);
+
+      if (token !== null && secretSessionTokenRef.current === token) {
+        try {
+          const secretsResult = await api.listEncryptedSecretHistory(token);
+          if (historyOpenRef.current && secretSessionTokenRef.current === token) {
+            setSecretHistory(secretsResult);
+          }
+        } catch (err) {
+          if (historyOpenRef.current && secretSessionTokenRef.current === token) {
+            setSecretHistory([]);
+            showNotice(toApiError(err).message);
+          }
+        }
+      } else if (secretSessionTokenRef.current === null) {
+        setSecretHistory([]);
+      }
+    } catch (err) {
+      if (historyOpenRef.current) setHistoryError(toApiError(err).message);
+    } finally {
+      if (historyOpenRef.current && secretSessionTokenRef.current === token) {
+        setHistoryLoading(false);
+      }
+    }
+  }
+
+  function closeHistoryWorkspace() {
+    historyOpenRef.current = false;
+    setHistoryOpen(false);
+    setHistorySearch("");
+    setVehicleHistory([]);
+    setSecretHistory([]);
+    setHistoryError(null);
+    setHistoryLoading(false);
   }
 
   function closeHiddenArea() {
+    const token = secretSessionTokenRef.current;
+    // Erst synchron alle Secret-Klartextdaten entfernen, dann best-effort beenden.
+    // Eine bereits geöffnete öffentliche Fahrzeughistorie bleibt sichtbar.
+    secretSessionTokenRef.current = null;
+    hiddenOpenRef.current = false;
+    setSecretSessionToken(null);
     setHiddenOpen(false);
-    for (const draft of hiddenDraftsRef.current) {
-      clearFieldError(draft.draftId);
-    }
+    setHiddenStatus(null);
+    setHiddenEntries([]);
     setHiddenDrafts([]);
+    setSecretHistory([]);
+    setUndoState(null);
+    setAutoFocusId(null);
+    setFieldErrors((previous) => {
+      const next = { ...previous };
+      for (const draft of hiddenDraftsRef.current) delete next[draft.draftId];
+      for (const entry of hiddenEntriesRef.current) delete next[entry.id];
+      return next;
+    });
+    hiddenEntriesRef.current = [];
+    hiddenDraftsRef.current = [];
+    secretHistoryRef.current = [];
+    if (token !== null) void api.endSecretSession(token).catch(() => undefined);
+    if (historyOpenRef.current) void loadHistoryWorkspace();
   }
 
   function addHiddenEntry() {
+    if (secretSessionTokenRef.current === null) return;
     const draft: HiddenEntryDraft = {
       draftId: `draft-h-${crypto.randomUUID()}`,
       name: "",
@@ -660,18 +847,26 @@ export default function App() {
   }
 
   async function createHiddenFromDraft(draft: HiddenEntryDraft) {
+    const token = secretSessionTokenRef.current;
+    if (token === null) {
+      creatingRef.current.delete(draft.draftId);
+      return;
+    }
     try {
-      const created = await api.createHiddenEntry({
+      const created = await api.createHiddenEntry(token, {
         name: draft.name,
         amountCents: draft.amountCents ?? 0,
         note: draft.note,
       });
+      if (secretSessionTokenRef.current !== token) return;
       setHiddenDrafts((prev) => prev.filter((entry) => entry.draftId !== draft.draftId));
       clearFieldError(draft.draftId);
       setHiddenEntries((prev) => [...prev, created]);
     } catch (err) {
-      const apiErr = toApiError(err);
-      setFieldError(draft.draftId, apiErr.field ?? "name", apiErr.message);
+      if (secretSessionTokenRef.current === token) {
+        const apiErr = toApiError(err);
+        setFieldError(draft.draftId, apiErr.field ?? "name", apiErr.message);
+      }
     } finally {
       creatingRef.current.delete(draft.draftId);
     }
@@ -731,6 +926,8 @@ export default function App() {
   }
 
   async function saveHiddenPatch(id: string, patch: api.HiddenEntryPatch) {
+    const token = secretSessionTokenRef.current;
+    if (token === null) return;
     const entry = hiddenEntriesRef.current.find((item) => item.id === id);
     if (!entry) {
       return;
@@ -751,12 +948,16 @@ export default function App() {
       prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
     );
     try {
-      const saved = await api.updateHiddenEntry(id, patch);
-      setHiddenEntries((prev) => prev.map((item) => (item.id === id ? saved : item)));
+      const saved = await api.updateHiddenEntry(token, id, patch);
+      if (secretSessionTokenRef.current === token) {
+        setHiddenEntries((prev) => prev.map((item) => (item.id === id ? saved : item)));
+      }
     } catch (err) {
-      const apiErr = toApiError(err);
-      setHiddenEntries((prev) => prev.map((item) => (item.id === id ? previous : item)));
-      setFieldError(id, apiErr.field ?? fields[0] ?? "name", apiErr.message);
+      if (secretSessionTokenRef.current === token) {
+        const apiErr = toApiError(err);
+        setHiddenEntries((prev) => prev.map((item) => (item.id === id ? previous : item)));
+        setFieldError(id, apiErr.field ?? fields[0] ?? "name", apiErr.message);
+      }
     }
   }
 
@@ -770,6 +971,8 @@ export default function App() {
   }
 
   async function archiveStoredHiddenEntry(id: string) {
+    const token = secretSessionTokenRef.current;
+    if (token === null) return;
     const entry = hiddenEntriesRef.current.find((item) => item.id === id);
     if (!entry) {
       return;
@@ -777,24 +980,29 @@ export default function App() {
     const previousList = hiddenEntriesRef.current;
     setHiddenEntries((prev) => prev.filter((item) => item.id !== id));
     try {
-      await api.archiveHiddenEntry(id);
+      await api.archiveHiddenEntry(token, id);
+      if (secretSessionTokenRef.current !== token) return;
       const name = entry.name || "Eintrag";
       showUndo(`${name} archiviert`, () => {
         setUndoState(null);
         void undoArchiveHiddenEntry(id);
       });
     } catch (err) {
-      setHiddenEntries(previousList);
-      showNotice(toApiError(err).message);
+      if (secretSessionTokenRef.current === token) {
+        setHiddenEntries(previousList);
+        showNotice(toApiError(err).message);
+      }
     }
   }
 
   async function undoArchiveHiddenEntry(id: string) {
+    const token = secretSessionTokenRef.current;
+    if (token === null) return;
     try {
-      await api.restoreHiddenEntry(id);
-      setHiddenEntries(await api.listHiddenEntries());
+      await api.restoreHiddenEntry(token, id);
+      await reloadHiddenEntries(token);
     } catch (err) {
-      showNotice(toApiError(err).message);
+      if (secretSessionTokenRef.current === token) showNotice(toApiError(err).message);
     }
   }
 
@@ -810,21 +1018,26 @@ export default function App() {
 
   async function handleConfirmRestore() {
     await api.confirmRestore();
-    // Die Datenbank wurde ersetzt: alles neu laden, Entwürfe verwerfen.
+    // Das Backend invalidiert beim Datenbanktausch alle Secret-Sitzungen.
+    closeHiddenArea();
     setVehicleDrafts([]);
     setPaymentDrafts([]);
-    setHiddenDrafts([]);
     setFieldErrors({});
     setUndoState(null);
-    const [vehicleList, paymentList] = await Promise.all([
+    const [vehicleList, paymentList, suggestions, preferences] = await Promise.all([
       api.listVehicles(),
       api.listOpenPayments(),
+      api.listCustomerSuggestions().catch(() => []),
+      api.getUiPreferences().catch(() => ({
+        paymentsPanelCollapsed: false,
+        vehicleColumnOrder: [...VEHICLE_COLUMN_IDS],
+      })),
     ]);
     setVehicles(vehicleList);
     setPayments(paymentList);
-    if (hiddenOpenRef.current) {
-      await loadHiddenArea();
-    }
+    setCustomerSuggestions(suggestions);
+    setPaymentsCollapsed(preferences.paymentsPanelCollapsed);
+    setVehicleColumnOrder(preferences.vehicleColumnOrder);
   }
 
   function handleCancelRestore() {
@@ -838,6 +1051,7 @@ export default function App() {
           search={search}
           onSearchChange={setSearch}
           onAddVehicle={addVehicle}
+          onOpenHistory={openHistoryWorkspace}
           onOpenHiddenArea={openHiddenArea}
           onBackup={handleBackup}
           onPrepareRestore={handlePrepareRestore}
@@ -847,53 +1061,72 @@ export default function App() {
         />
       }
     >
-      <section className="vehicle-section" aria-label="Fahrzeuge">
-        <VehicleTable
-          vehicles={visibleVehicles}
-          drafts={vehicleDrafts}
-          loading={loading}
-          loadError={loadError}
-          onRetryLoad={() => void loadCoreData()}
-          autoFocusId={autoFocusId}
-          fieldErrors={fieldErrors}
-          onCommitText={commitVehicleText}
-          onToggleStatus={toggleVehicleStatus}
-          onArchive={archiveVehicle}
-          onDraftRowLeave={handleVehicleDraftRowLeave}
-          onMove={moveVehicle}
+      {historyOpen ? (
+        <HistoryWorkspace
+          vehicleHistory={vehicleHistory}
+          secretHistory={secretHistory}
+          search={historySearch}
+          loading={historyLoading}
+          error={historyError}
+          secretUnlocked={secretSessionToken !== null && hiddenStatus?.unlocked === true}
+          onSearchChange={setHistorySearch}
+          onRetry={() => void loadHistoryWorkspace()}
+          onBack={closeHistoryWorkspace}
+          onCloseSession={closeHiddenArea}
         />
-      </section>
-      {/* Geschlossen nutzt der Zahlungsbereich die volle Breite; geöffnet
-          teilt sich der untere Bereich in Zahlungen (links) und versteckte
-          Einträge (rechts). */}
-      <div className={hiddenOpen ? "bottom-area is-split" : "bottom-area"}>
-        <PaymentsPanel
-          payments={payments}
-          drafts={paymentDrafts}
-          autoFocusId={autoFocusId}
-          fieldErrors={fieldErrors}
-          onAdd={addPayment}
-          onCommitText={commitPaymentText}
-          onCommitAmount={commitPaymentAmount}
-          onMarkPaid={markPaymentPaid}
-          onDraftRowLeave={handlePaymentDraftRowLeave}
-        />
-        {hiddenOpen && (
-          <HiddenPanel
-            status={hiddenStatus}
-            entries={hiddenEntries}
-            drafts={hiddenDrafts}
-            autoFocusId={autoFocusId}
-            fieldErrors={fieldErrors}
-            onAdd={addHiddenEntry}
-            onCommitText={commitHiddenText}
-            onCommitAmount={commitHiddenAmount}
-            onArchive={archiveHiddenEntry}
-            onDraftRowLeave={handleHiddenDraftRowLeave}
-            onClose={closeHiddenArea}
-          />
-        )}
-      </div>
+      ) : (
+        <>
+          <section className="vehicle-section" aria-label="Fahrzeuge">
+            <VehicleTable
+              vehicles={visibleVehicles}
+              drafts={vehicleDrafts}
+              columnOrder={vehicleColumnOrder}
+              loading={loading}
+              loadError={loadError}
+              onRetryLoad={() => void loadCoreData()}
+              autoFocusId={autoFocusId}
+              fieldErrors={fieldErrors}
+              onCommitText={commitVehicleText}
+              onToggleStatus={toggleVehicleStatus}
+              onArchive={archiveVehicle}
+              onDraftRowLeave={handleVehicleDraftRowLeave}
+              onMove={moveVehicle}
+              onColumnOrderChange={changeVehicleColumnOrder}
+            />
+          </section>
+          <div className={hiddenOpen ? "bottom-area is-split" : "bottom-area"}>
+            <PaymentsPanel
+              payments={payments}
+              drafts={paymentDrafts}
+              suggestions={customerSuggestions}
+              collapsed={paymentsCollapsed}
+              autoFocusId={autoFocusId}
+              fieldErrors={fieldErrors}
+              onToggleCollapsed={togglePaymentsCollapsed}
+              onAdd={addPayment}
+              onCommitText={commitPaymentText}
+              onCommitAmount={commitPaymentAmount}
+              onMarkPaid={markPaymentPaid}
+              onDraftRowLeave={handlePaymentDraftRowLeave}
+            />
+            {hiddenOpen && (
+              <HiddenPanel
+                status={hiddenStatus}
+                entries={hiddenEntries}
+                drafts={hiddenDrafts}
+                autoFocusId={autoFocusId}
+                fieldErrors={fieldErrors}
+                onAdd={addHiddenEntry}
+                onCommitText={commitHiddenText}
+                onCommitAmount={commitHiddenAmount}
+                onArchive={archiveHiddenEntry}
+                onDraftRowLeave={handleHiddenDraftRowLeave}
+                onClose={closeHiddenArea}
+              />
+            )}
+          </div>
+        </>
+      )}
       {notice !== null && (
         <div key={notice.id} className="error-notice" role="alert">
           {notice.message}

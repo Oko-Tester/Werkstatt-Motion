@@ -32,6 +32,19 @@ export type VehicleStatusField = "tuvRequired" | "partsOrdered" | "partsArrived"
 /** Direkt bearbeitbare Textfelder eines Fahrzeugs. */
 export type VehicleTextField = "customerName" | "vehicleName" | "licensePlate";
 
+/** Stabile fachliche IDs der verschiebbaren Fahrzeugspalten. */
+export const VEHICLE_COLUMN_IDS = [
+  "customerName",
+  "vehicleName",
+  "licensePlate",
+  "tuvRequired",
+  "partsOrdered",
+  "partsArrived",
+  "isDone",
+] as const;
+
+export type VehicleColumnId = (typeof VEHICLE_COLUMN_IDS)[number];
+
 /** Direkt bearbeitbare Textfelder einer Zahlung. */
 export type PaymentTextField = "customerName" | "note";
 
@@ -78,6 +91,50 @@ export type HiddenTextField = "name" | "note";
 export interface HiddenStatus {
   unlocked: boolean;
   error?: ApiError;
+}
+
+/** Unveränderlicher fachlicher Snapshot eines abgeschlossenen Fahrzeugs. */
+export interface VehicleHistory {
+  id: string;
+  sourceVehicleId: string;
+  customerName: string;
+  vehicleName: string;
+  licensePlate: string;
+  tuvRequired: boolean;
+  partsOrdered: boolean;
+  partsArrived: boolean;
+  isDone: boolean;
+  completedAt: string;
+  archivedAt: string | null;
+  vehicleCreatedAt: string;
+  snapshotCreatedAt: string;
+}
+
+/** Entschlüsselte Ansicht eines verschlüsselten Secret-History-Snapshots. */
+export interface SecretHistoryEntry {
+  id: string;
+  sourceHiddenEntryId: string;
+  name: string;
+  amountCents: number;
+  note: string;
+  completedOrArchivedAt: string;
+  completedAt: string;
+  createdAt: string;
+}
+
+/** Nicht geheime Kundenvorschläge ausschließlich aus Fahrzeugdaten. */
+export interface CustomerSuggestion {
+  id: string;
+  customerName: string;
+  vehicleName: string | null;
+  licensePlate: string | null;
+  lastUsedAt: string;
+}
+
+/** Persistente Oberflächenpräferenzen aus SQLite. */
+export interface UiPreferences {
+  paymentsPanelCollapsed: boolean;
+  vehicleColumnOrder: VehicleColumnId[];
 }
 
 /**

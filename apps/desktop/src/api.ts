@@ -1,10 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ApiError,
+  CustomerSuggestion,
   HiddenEntry,
   HiddenStatus,
   Payment,
+  SecretHistoryEntry,
+  UiPreferences,
   Vehicle,
+  VehicleColumnId,
+  VehicleHistory,
   VehicleStatusField,
 } from "./types";
 
@@ -67,6 +72,26 @@ export function restoreVehicle(id: string): Promise<Vehicle> {
   return invoke("restore_vehicle", { id });
 }
 
+export function listCompletedVehicleHistory(): Promise<VehicleHistory[]> {
+  return invoke("list_completed_vehicle_history");
+}
+
+export function listCustomerSuggestions(): Promise<CustomerSuggestion[]> {
+  return invoke("list_customer_suggestions");
+}
+
+export function getUiPreferences(): Promise<UiPreferences> {
+  return invoke("get_ui_preferences");
+}
+
+export function updatePaymentsPanelCollapsed(collapsed: boolean): Promise<UiPreferences> {
+  return invoke("update_payments_panel_collapsed", { collapsed });
+}
+
+export function updateVehicleColumnOrder(columnOrder: VehicleColumnId[]): Promise<UiPreferences> {
+  return invoke("update_vehicle_column_order", { columnOrder });
+}
+
 export function listOpenPayments(): Promise<Payment[]> {
   return invoke("list_open_payments");
 }
@@ -101,24 +126,45 @@ export function hiddenStatus(): Promise<HiddenStatus> {
   return invoke("hidden_status");
 }
 
-export function listHiddenEntries(): Promise<HiddenEntry[]> {
-  return invoke("list_hidden_entries");
+/** Erstellt eine flüchtige Klartext-Sitzung; der Token bleibt ausschließlich im React-State. */
+export function beginSecretSession(): Promise<string> {
+  return invoke("begin_secret_session");
 }
 
-export function createHiddenEntry(input: NewHiddenEntryInput): Promise<HiddenEntry> {
-  return invoke("create_hidden_entry", { input });
+export function endSecretSession(sessionToken: string): Promise<void> {
+  return invoke("end_secret_session", { sessionToken });
 }
 
-export function updateHiddenEntry(id: string, patch: HiddenEntryPatch): Promise<HiddenEntry> {
-  return invoke("update_hidden_entry", { id, patch });
+export function listHiddenEntries(sessionToken: string): Promise<HiddenEntry[]> {
+  return invoke("list_hidden_entries", { sessionToken });
 }
 
-export function archiveHiddenEntry(id: string): Promise<HiddenEntry> {
-  return invoke("archive_hidden_entry", { id });
+export function createHiddenEntry(
+  sessionToken: string,
+  input: NewHiddenEntryInput,
+): Promise<HiddenEntry> {
+  return invoke("create_hidden_entry", { sessionToken, input });
 }
 
-export function restoreHiddenEntry(id: string): Promise<HiddenEntry> {
-  return invoke("restore_hidden_entry", { id });
+export function updateHiddenEntry(
+  sessionToken: string,
+  id: string,
+  patch: HiddenEntryPatch,
+): Promise<HiddenEntry> {
+  return invoke("update_hidden_entry", { sessionToken, id, patch });
+}
+
+export function archiveHiddenEntry(sessionToken: string, id: string): Promise<HiddenEntry> {
+  return invoke("archive_hidden_entry", { sessionToken, id });
+}
+
+export function restoreHiddenEntry(sessionToken: string, id: string): Promise<HiddenEntry> {
+  return invoke("restore_hidden_entry", { sessionToken, id });
+}
+
+/** Fachlich benannter Client für den bevorzugten Rust-Command. */
+export function listEncryptedSecretHistory(sessionToken: string): Promise<SecretHistoryEntry[]> {
+  return invoke("list_hidden_entry_history", { sessionToken });
 }
 
 // ---------- Backup und Wiederherstellung ----------

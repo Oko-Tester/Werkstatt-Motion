@@ -1,14 +1,24 @@
 import type { FocusEvent } from "react";
 import { formatCents } from "../money";
-import type { FieldErrors, Payment, PaymentDraft, PaymentTextField } from "../types";
+import type {
+  CustomerSuggestion,
+  FieldErrors,
+  Payment,
+  PaymentDraft,
+  PaymentTextField,
+} from "../types";
+import { CustomerAutocomplete } from "./CustomerAutocomplete";
 import { InlineMoneyField } from "./InlineMoneyField";
 import { InlineTextField } from "./InlineTextField";
 
 interface PaymentsPanelProps {
   payments: Payment[];
   drafts: PaymentDraft[];
+  suggestions: CustomerSuggestion[];
+  collapsed: boolean;
   autoFocusId: string | null;
   fieldErrors: FieldErrors;
+  onToggleCollapsed: () => void;
   onAdd: () => void;
   onCommitText: (id: string, field: PaymentTextField, value: string) => void;
   onCommitAmount: (id: string, raw: string) => void;
@@ -16,7 +26,6 @@ interface PaymentsPanelProps {
   onDraftRowLeave: (draftId: string) => void;
 }
 
-/** Gemeinsame Sicht auf gespeicherte Zahlungen und Entwurfszeilen. */
 interface PaymentRowData {
   id: string;
   customerName: string;
@@ -28,16 +37,35 @@ interface PaymentRowData {
 export function PaymentsPanel({
   payments,
   drafts,
+  suggestions,
+  collapsed,
   autoFocusId,
   fieldErrors,
+  onToggleCollapsed,
   onAdd,
   onCommitText,
   onCommitAmount,
   onMarkPaid,
   onDraftRowLeave,
 }: PaymentsPanelProps) {
-  const totalCents = payments.reduce((sum, payment) => sum + payment.amountCents, 0);
+  if (collapsed) {
+    return (
+      <section className="payments-panel is-collapsed" aria-label="Offene Zahlungen">
+        <div className="payments-header">
+          <h2 className="payments-title">Offene Zahlungen</h2>
+          <button
+            type="button"
+            className="btn btn-secondary payments-expand"
+            onClick={onToggleCollapsed}
+          >
+            Erweitern
+          </button>
+        </div>
+      </section>
+    );
+  }
 
+  const totalCents = payments.reduce((sum, payment) => sum + payment.amountCents, 0);
   const rows: PaymentRowData[] = [
     ...drafts.map((draft) => ({
       id: draft.draftId,
@@ -71,6 +99,27 @@ export function PaymentsPanel({
         <button type="button" className="btn btn-secondary payments-add" onClick={onAdd}>
           + Offener Betrag
         </button>
+        <button
+          type="button"
+          className="icon-button payments-collapse"
+          aria-label="Offene Zahlungen minimieren"
+          title="Minimieren"
+          onClick={onToggleCollapsed}
+        >
+          <svg
+            aria-hidden="true"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m6 15 6-6 6 6" />
+          </svg>
+        </button>
       </div>
       {rows.length === 0 ? (
         <p className="payments-empty">Keine offenen Zahlungen</p>
@@ -84,9 +133,10 @@ export function PaymentsPanel({
                 className="payment-row"
                 onBlur={(event) => handleRowBlur(event, row)}
               >
-                <InlineTextField
+                <CustomerAutocomplete
                   value={row.customerName}
                   label={`Kunde (${rowName})`}
+                  suggestions={suggestions}
                   placeholder="Kunde"
                   autoFocus={row.id === autoFocusId}
                   error={fieldErrors[row.id]?.customerName}
