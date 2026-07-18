@@ -121,8 +121,12 @@ export default function App() {
   hiddenEntriesRef.current = hiddenEntries;
   const hiddenDraftsRef = useRef(hiddenDrafts);
   hiddenDraftsRef.current = hiddenDrafts;
+  const secretHistoryRef = useRef(secretHistory);
+  secretHistoryRef.current = secretHistory;
   const hiddenOpenRef = useRef(hiddenOpen);
   hiddenOpenRef.current = hiddenOpen;
+  const historyOpenRef = useRef(historyOpen);
+  historyOpenRef.current = historyOpen;
   const secretSessionTokenRef = useRef(secretSessionToken);
   secretSessionTokenRef.current = secretSessionToken;
   const fieldErrorsRef = useRef(fieldErrors);
@@ -703,7 +707,13 @@ export default function App() {
       setHiddenOpen(true);
       setHiddenStatus({ unlocked: true });
       const entries = await api.listHiddenEntries(token);
-      if (secretSessionTokenRef.current === token) setHiddenEntries(entries);
+      if (secretSessionTokenRef.current === token) {
+        setHiddenEntries(entries);
+        if (historyOpenRef.current) {
+          setSecretHistory([]);
+          void loadHistoryWorkspace();
+        }
+      }
     } catch (err) {
       // Auch ein Schlüssel-/Sessionfehler bleibt als sicherer, gesperrter Zustand sichtbar.
       if (secretSessionTokenRef.current === null) {
@@ -734,7 +744,7 @@ export default function App() {
   }
 
   function openHistoryWorkspace() {
-    if (secretSessionTokenRef.current === null) return;
+    historyOpenRef.current = true;
     setVehicleHistory([]);
     setSecretHistory([]);
     setHistoryOpen(true);
@@ -744,26 +754,39 @@ export default function App() {
 
   async function loadHistoryWorkspace() {
     const token = secretSessionTokenRef.current;
-    if (token === null) return;
     setHistoryLoading(true);
     setHistoryError(null);
     try {
-      const [vehiclesResult, secretsResult] = await Promise.all([
-        api.listCompletedVehicleHistory(),
-        api.listEncryptedSecretHistory(token),
-      ]);
-      if (secretSessionTokenRef.current === token) {
-        setVehicleHistory(vehiclesResult);
-        setSecretHistory(secretsResult);
+      const vehiclesResult = await api.listCompletedVehicleHistory();
+      if (!historyOpenRef.current) return;
+      setVehicleHistory(vehiclesResult);
+
+      if (token !== null && secretSessionTokenRef.current === token) {
+        try {
+          const secretsResult = await api.listEncryptedSecretHistory(token);
+          if (historyOpenRef.current && secretSessionTokenRef.current === token) {
+            setSecretHistory(secretsResult);
+          }
+        } catch (err) {
+          if (historyOpenRef.current && secretSessionTokenRef.current === token) {
+            setSecretHistory([]);
+            showNotice(toApiError(err).message);
+          }
+        }
+      } else if (secretSessionTokenRef.current === null) {
+        setSecretHistory([]);
       }
     } catch (err) {
-      if (secretSessionTokenRef.current === token) setHistoryError(toApiError(err).message);
+      if (historyOpenRef.current) setHistoryError(toApiError(err).message);
     } finally {
-      if (secretSessionTokenRef.current === token) setHistoryLoading(false);
+      if (historyOpenRef.current && secretSessionTokenRef.current === token) {
+        setHistoryLoading(false);
+      }
     }
   }
 
   function closeHistoryWorkspace() {
+    historyOpenRef.current = false;
     setHistoryOpen(false);
     setHistorySearch("");
     setVehicleHistory([]);
@@ -774,20 +797,16 @@ export default function App() {
 
   function closeHiddenArea() {
     const token = secretSessionTokenRef.current;
-    // Erst synchron alle Klartextdaten und Ansichten entfernen, dann best-effort beenden.
+    // Erst synchron alle Secret-Klartextdaten entfernen, dann best-effort beenden.
+    // Eine bereits geöffnete öffentliche Fahrzeughistorie bleibt sichtbar.
     secretSessionTokenRef.current = null;
     hiddenOpenRef.current = false;
     setSecretSessionToken(null);
     setHiddenOpen(false);
-    setHistoryOpen(false);
-    setHistorySearch("");
     setHiddenStatus(null);
     setHiddenEntries([]);
     setHiddenDrafts([]);
     setSecretHistory([]);
-    setVehicleHistory([]);
-    setHistoryError(null);
-    setHistoryLoading(false);
     setUndoState(null);
     setAutoFocusId(null);
     setFieldErrors((previous) => {
@@ -796,7 +815,11 @@ export default function App() {
       for (const entry of hiddenEntriesRef.current) delete next[entry.id];
       return next;
     });
+    hiddenEntriesRef.current = [];
+    hiddenDraftsRef.current = [];
+    secretHistoryRef.current = [];
     if (token !== null) void api.endSecretSession(token).catch(() => undefined);
+    if (historyOpenRef.current) void loadHistoryWorkspace();
   }
 
   function addHiddenEntry() {
@@ -1028,6 +1051,7 @@ export default function App() {
           search={search}
           onSearchChange={setSearch}
           onAddVehicle={addVehicle}
+          onOpenHistory={openHistoryWorkspace}
           onOpenHiddenArea={openHiddenArea}
           onBackup={handleBackup}
           onPrepareRestore={handlePrepareRestore}
@@ -1037,13 +1061,14 @@ export default function App() {
         />
       }
     >
-      {historyOpen && secretSessionToken !== null ? (
+      {historyOpen ? (
         <HistoryWorkspace
           vehicleHistory={vehicleHistory}
           secretHistory={secretHistory}
           search={historySearch}
           loading={historyLoading}
           error={historyError}
+          secretUnlocked={secretSessionToken !== null && hiddenStatus?.unlocked === true}
           onSearchChange={setHistorySearch}
           onRetry={() => void loadHistoryWorkspace()}
           onBack={closeHistoryWorkspace}
@@ -1096,8 +1121,6 @@ export default function App() {
                 onCommitAmount={commitHiddenAmount}
                 onArchive={archiveHiddenEntry}
                 onDraftRowLeave={handleHiddenDraftRowLeave}
-                secretUnlocked={secretSessionToken !== null && hiddenStatus?.unlocked === true}
-                onOpenHistory={openHistoryWorkspace}
                 onClose={closeHiddenArea}
               />
             )}

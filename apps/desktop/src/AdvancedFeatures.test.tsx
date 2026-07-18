@@ -49,19 +49,27 @@ afterEach(() => {
 });
 
 describe("Secret-Sitzung und Inline-Historie", () => {
-  it("ist beim Start gesperrt, beginnt erst nach Long-Press eine flüchtige Session und nutzt deren Token", async () => {
+  it("zeigt Fahrzeughistorie bereits gesperrt und lädt Secret-Daten erst nach Long-Press", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const storageGet = vi.spyOn(Storage.prototype, "getItem");
     const storageSet = vi.spyOn(Storage.prototype, "setItem");
     const { backend, view } = await renderReady();
 
     expect(screen.queryByRole("region", { name: "Versteckte Einträge" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Historie" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Historie" })).toBeInTheDocument();
     expect(backend.calls).not.toContain("begin_secret_session");
+
+    fireEvent.click(screen.getByRole("button", { name: "Historie" }));
+    const publicWorkspace = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
+    expect(within(publicWorkspace).getByText("Müller, Anna")).toBeInTheDocument();
+    expect(within(publicWorkspace).queryByText("Entschlüsselte Secret-History")).not.toBeInTheDocument();
+    expect(within(publicWorkspace).queryByText("Geheimkonto")).not.toBeInTheDocument();
+    expect(backend.calls).toContain("list_completed_vehicle_history");
+    expect(backend.calls).not.toContain("list_hidden_entry_history");
+    fireEvent.click(within(publicWorkspace).getByRole("button", { name: "← Zurück" }));
 
     await openSecret(view.container);
     expect(await screen.findByDisplayValue("Geheimkonto")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Historie" })).toBeInTheDocument();
     expect(backend.calls.indexOf("begin_secret_session")).toBeLessThan(
       backend.calls.indexOf("list_hidden_entries"),
     );
@@ -72,6 +80,34 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     ).toBe(token);
     expect(storageGet).not.toHaveBeenCalled();
     expect(storageSet).not.toHaveBeenCalled();
+  });
+
+  it("blendet Secret-History in der bereits geöffneten Historie erst nach Long-Press ein", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { backend, view } = await renderReady();
+    backend.secretHistory.push({
+      id: "sh-seeded",
+      sourceHiddenEntryId: backend.hiddenEntries[0].id,
+      name: "Versteckte Rechnung",
+      amountCents: 77700,
+      note: "Nur intern",
+      completedOrArchivedAt: "2026-01-02T10:00:00.000Z",
+      completedAt: "2026-01-02T10:00:00.000Z",
+      createdAt: "2026-01-02T10:00:01.000Z",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Historie" }));
+    const workspace = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
+    expect(within(workspace).queryByText("Versteckte Rechnung")).not.toBeInTheDocument();
+    expect(backend.calls).not.toContain("list_hidden_entry_history");
+
+    fireEvent.pointerDown(getLogo(view.container), { button: 0 });
+    act(() => vi.advanceTimersByTime(3000));
+    fireEvent.pointerUp(getLogo(view.container));
+
+    expect(await within(workspace).findByText("Entschlüsselte Secret-History")).toBeInTheDocument();
+    expect(await within(workspace).findByText("Versteckte Rechnung")).toBeInTheDocument();
+    expect(backend.calls).toContain("list_hidden_entry_history");
   });
 
   it("zeigt beide Historien als direkte Arbeitsansicht und kehrt sichtbar zurück", async () => {
@@ -103,26 +139,34 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     expect(screen.getByRole("region", { name: "Versteckte Einträge" })).toBeInTheDocument();
   });
 
-  it("löscht beim Schließen sofort Panel, History, Klartext-Drafts und Token und beendet best-effort", async () => {
+  it("entfernt beim Sperren alle Secret-Daten, lässt aber die öffentliche Fahrzeughistorie offen", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { backend, view } = await renderReady();
     await openSecret(view.container);
     await screen.findByDisplayValue("Geheimkonto");
 
+    fireEvent.click(screen.getByRole("button", { name: "Geheimkonto archivieren" }));
+    await waitFor(() => expect(backend.secretHistory).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "+ Eintrag" }));
     const draft = screen.getByRole("textbox", { name: "Bezeichnung (Neuer Eintrag)" });
     fireEvent.change(draft, { target: { value: "Hochsensibler Entwurf" } });
     fireEvent.click(screen.getByRole("button", { name: "Historie" }));
     const workspace = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
+    expect(within(workspace).getByText("Geheimkonto")).toBeInTheDocument();
 
     fireEvent.click(within(workspace).getByRole("button", { name: "Secret-Bereich schließen" }));
-    expect(screen.queryByRole("region", { name: "Historienarbeitsansicht" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Versteckte Einträge" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Hochsensibler Entwurf")).not.toBeInTheDocument();
-    expect(screen.queryByText("Geheimkonto")).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Fahrzeuge" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Historienarbeitsansicht" })).toBeInTheDocument();
+    expect(await within(workspace).findByText("Müller, Anna")).toBeInTheDocument();
+    expect(within(workspace).queryByText("Entschlüsselte Secret-History")).not.toBeInTheDocument();
+    expect(within(workspace).queryByText("Geheimkonto")).not.toBeInTheDocument();
+    expect(within(workspace).queryByText("Hochsensibler Entwurf")).not.toBeInTheDocument();
     await waitFor(() => expect(backend.calls).toContain("end_secret_session"));
     expect(backend.activeSessionTokens.size).toBe(0);
+
+    fireEvent.click(within(workspace).getByRole("button", { name: "← Zurück" }));
+    expect(screen.getByRole("region", { name: "Fahrzeuge" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Versteckte Einträge" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Hochsensibler Entwurf")).not.toBeInTheDocument();
   });
 
   it("verweigert Secret-CRUD und Secret-History ohne gültigen Token im Fake-Backend", async () => {

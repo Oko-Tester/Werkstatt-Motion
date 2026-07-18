@@ -788,6 +788,10 @@ input {
   gap: var(--space-2);
 }
 
+.history-tables.is-public {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .history-group {
   min-height: 0;
   display: flex;

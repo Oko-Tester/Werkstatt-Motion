@@ -30,12 +30,15 @@ vollständig offline. Version 1.0.0.
 - **Fahrzeugspalten anordnen:** Fachliche Spalten am Tabellenkopf ziehen –
   oder mit Alt+Pfeiltaste verschieben. Zeilengriff und Archivspalte bleiben
   fest; die Reihenfolge wird automatisch gespeichert.
+- **Historie öffnen:** „Historie“ in der Kopfzeile öffnet jederzeit die
+  erledigten Fahrzeuge als Arbeitsansicht innerhalb des App-Fensters, ohne
+  Modal. Versteckte Rechnungen werden dort erst ergänzt, nachdem das Logo drei
+  Sekunden gedrückt wurde; beim Sperren verschwinden sie sofort wieder, während
+  die normale Fahrzeughistorie geöffnet bleibt. „Zurück“ schließt die Ansicht.
 - **Versteckten Bereich öffnen und schließen:** Das Werkstattlogo oben
   links **drei Sekunden gedrückt halten** (Maus oder Touch). Es erscheint
   bewusst keine Fortschrittsanzeige. Das sichtbare X im Bereich schließt
   ihn mit einem Klick und löscht alle entschlüsselten Daten aus dem UI-Zustand.
-  „Historie“ öffnet innerhalb des App-Fensters die Fahrzeug- und Secret-Historie
-  ohne Modal; „Zurück“ schließt sie mit einem Klick.
 - **Backup erstellen:** „Backup“ in der Kopfzeile klicken und im
   Systemdialog einen Speicherort wählen (z. B. USB-Stick). Fertig.
 - **Daten wiederherstellen:** „Wiederherstellen“ klicken, Backup-Datei

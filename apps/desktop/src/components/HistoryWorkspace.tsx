@@ -8,6 +8,7 @@ interface HistoryWorkspaceProps {
   search: string;
   loading: boolean;
   error: string | null;
+  secretUnlocked: boolean;
   onSearchChange: (value: string) => void;
   onRetry: () => void;
   onBack: () => void;
@@ -40,6 +41,7 @@ export function HistoryWorkspace({
   search,
   loading,
   error,
+  secretUnlocked,
   onSearchChange,
   onRetry,
   onBack,
@@ -71,7 +73,11 @@ export function HistoryWorkspace({
         </button>
         <div>
           <h2>Historie</h2>
-          <p>Unveränderliche Fahrzeug- und Secret-Snapshots</p>
+          <p>
+            {secretUnlocked
+              ? "Unveränderliche Fahrzeug- und Secret-Snapshots"
+              : "Unveränderliche Fahrzeug-Snapshots"}
+          </p>
         </div>
         <label className="history-search">
           <span className="visually-hidden">Historie durchsuchen</span>
@@ -83,9 +89,11 @@ export function HistoryWorkspace({
             onChange={(event) => onSearchChange(event.target.value)}
           />
         </label>
-        <button type="button" className="btn btn-secondary" onClick={onCloseSession}>
-          Secret-Bereich schließen
-        </button>
+        {secretUnlocked && (
+          <button type="button" className="btn btn-secondary" onClick={onCloseSession}>
+            Secret-Bereich schließen
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -98,7 +106,7 @@ export function HistoryWorkspace({
           </button>
         </div>
       ) : (
-        <div className="history-tables">
+        <div className={secretUnlocked ? "history-tables" : "history-tables is-public"}>
           <section className="history-group" aria-labelledby="vehicle-history-title">
             <div className="history-group-heading">
               <h3 id="vehicle-history-title">Fahrzeug-Snapshots</h3>
@@ -137,7 +145,8 @@ export function HistoryWorkspace({
             </div>
           </section>
 
-          <section className="history-group" aria-labelledby="secret-history-title">
+          {secretUnlocked && (
+            <section className="history-group" aria-labelledby="secret-history-title">
             <div className="history-group-heading">
               <h3 id="secret-history-title">Entschlüsselte Secret-History</h3>
             </div>
@@ -169,7 +178,8 @@ export function HistoryWorkspace({
                 </tbody>
               </table>
             </div>
-          </section>
+            </section>
+          )}
         </div>
       )}
     </section>

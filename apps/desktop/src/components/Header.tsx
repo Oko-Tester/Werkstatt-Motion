@@ -10,6 +10,8 @@ interface HeaderProps {
   search: string;
   onSearchChange: (value: string) => void;
   onAddVehicle: () => void;
+  /** Öffnet die reguläre Fahrzeughistorie; Secret-Inhalte bleiben gesperrt. */
+  onOpenHistory: () => void;
   /** Wird nach drei Sekunden Gedrückthalten des Logos aufgerufen. */
   onOpenHiddenArea: () => void;
   onBackup: () => Promise<BackupResult>;
@@ -31,6 +33,7 @@ export function Header({
   search,
   onSearchChange,
   onAddVehicle,
+  onOpenHistory,
   onOpenHiddenArea,
   onBackup,
   onPrepareRestore,
@@ -160,6 +163,9 @@ export function Header({
         <SearchInput value={search} onChange={onSearchChange} inputRef={searchRef} />
       </div>
       <div className="header-actions">
+        <button type="button" className="btn btn-secondary" onClick={onOpenHistory}>
+          Historie
+        </button>
         {restorePreview !== null ? (
           // Zweistufige Inline-Bestätigung statt eines Bestätigungsdialogs:
           // Klick 1 hat die Datei gewählt und validiert, Klick 2 stellt her.
