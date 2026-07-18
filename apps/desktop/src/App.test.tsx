@@ -66,13 +66,30 @@ describe("App: Laden und Suche", () => {
 });
 
 describe("App: Fahrzeug anlegen", () => {
+  it("startet einen neuen Kunden direkt unter der Fahrzeugtabelle", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Neuen Kunden hinzufügen" }));
+
+    const draftCustomer = document.activeElement as HTMLInputElement;
+    expect(draftCustomer).toHaveAttribute("placeholder", "Kunde");
+    expect(draftCustomer).toHaveFocus();
+    const vehicleRegion = screen.getByRole("region", { name: "Fahrzeuge" });
+    expect(within(vehicleRegion).getAllByRole("row").at(-1)).toBe(draftCustomer.closest("tr"));
+  });
+
   it("legt über eine bearbeitbare Zeile ein Fahrzeug in der Datenbank an", async () => {
     const user = userEvent.setup();
     await renderApp();
     await user.click(screen.getByRole("button", { name: "+ Fahrzeug" }));
 
-    const draftRow = screen.getAllByRole("row")[1];
-    expect(within(draftRow).getByPlaceholderText("Kunde")).toHaveFocus();
+    const draftCustomer = document.activeElement as HTMLInputElement;
+    const draftRow = draftCustomer.closest("tr")!;
+    expect(draftCustomer).toHaveAttribute("placeholder", "Kunde");
+    expect(draftCustomer).toHaveFocus();
+    const vehicleRegion = screen.getByRole("region", { name: "Fahrzeuge" });
+    expect(within(vehicleRegion).getAllByRole("row").at(-1)).toBe(draftRow);
 
     // Enter führt durch die Felder, gespeichert wird beim Verlassen der Zeile.
     await user.keyboard("Neu, Kunde{Enter}");
@@ -87,9 +104,10 @@ describe("App: Fahrzeug anlegen", () => {
     expect(created?.vehicleName).toBe("Opel Corsa");
     // Kennzeichen wird normalisiert gespeichert.
     expect(created?.licensePlate).toBe("M AB 99");
-    expect(await screen.findByDisplayValue("M AB 99")).toBeInTheDocument();
-    // Neues Fahrzeug steht oben.
-    expect(backend.vehicles.every((entry) => created!.position <= entry.position)).toBe(true);
+    const createdPlate = await screen.findByDisplayValue("M AB 99");
+    expect(within(vehicleRegion).getAllByRole("row").at(-1)).toBe(createdPlate.closest("tr"));
+    // Neues Fahrzeug steht unten.
+    expect(backend.vehicles.every((entry) => created!.position >= entry.position)).toBe(true);
   });
 
   it("verwirft eine leer verlassene neue Zeile ohne Rückfrage", async () => {
@@ -118,6 +136,26 @@ describe("App: Fahrzeug anlegen", () => {
 });
 
 describe("App: Inline-Bearbeitung", () => {
+  it("speichert Fahrzeugnotizen und findet Fahrzeuge über den Notiztext", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    const noteField = screen.getByRole("textbox", { name: "Notiz (M-AB 1234)" });
+
+    await user.type(noteField, "Kunde wartet auf Rückruf");
+    await user.tab();
+
+    await waitFor(() => expect(backend.vehicles[0].note).toBe("Kunde wartet auf Rückruf"));
+    fireEvent.mouseEnter(noteField);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Kunde wartet auf Rückruf");
+    fireEvent.mouseLeave(noteField);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    const search = screen.getByRole("searchbox", { name: "Fahrzeuge durchsuchen" });
+    await user.type(search, "Rückruf");
+    expect(screen.getByDisplayValue("Müller, Anna")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Yilmaz, Emre")).not.toBeInTheDocument();
+  });
+
   it("speichert Textänderungen beim Verlassen des Feldes und normalisiert Kennzeichen", async () => {
     const user = userEvent.setup();
     await renderApp();

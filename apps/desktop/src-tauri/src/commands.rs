@@ -246,12 +246,30 @@ pub fn update_payments_panel_collapsed(
 }
 
 #[tauri::command]
+pub fn update_payments_panel_height(
+    state: State<'_, Db>,
+    height: i64,
+) -> Result<UiPreferences, ApiError> {
+    let state = state.lock()?;
+    db::update_payments_panel_height(state.conn()?, height)
+}
+
+#[tauri::command]
 pub fn update_vehicle_column_order(
     state: State<'_, Db>,
     column_order: Vec<String>,
 ) -> Result<UiPreferences, ApiError> {
     let state = state.lock()?;
     db::update_vehicle_column_order(state.conn()?, &column_order)
+}
+
+#[tauri::command]
+pub fn update_vehicle_hidden_columns(
+    state: State<'_, Db>,
+    hidden_columns: Vec<String>,
+) -> Result<UiPreferences, ApiError> {
+    let state = state.lock()?;
+    db::update_vehicle_hidden_columns(state.conn()?, &hidden_columns)
 }
 
 // ---------- Zahlungen ----------

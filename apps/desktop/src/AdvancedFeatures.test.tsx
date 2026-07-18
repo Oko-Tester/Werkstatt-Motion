@@ -181,6 +181,41 @@ describe("Secret-Sitzung und Inline-Historie", () => {
 });
 
 describe("Zahlungsbereich und persistente UI-Präferenzen", () => {
+  it("vergrößert den Bereich per Ziehgriff und stellt die Höhe nach Remount wieder her", async () => {
+    const { backend, view } = await renderReady();
+    const handle = screen.getByRole("separator", {
+      name: "Höhe der offenen Zahlungen ändern",
+    });
+
+    fireEvent(handle, new MouseEvent("pointerdown", { bubbles: true, clientY: 400 }));
+    fireEvent(handle, new MouseEvent("pointermove", { bubbles: true, clientY: 300 }));
+    fireEvent(handle, new MouseEvent("pointerup", { bubbles: true, clientY: 300 }));
+
+    await waitFor(() => expect(backend.preferences.paymentsPanelHeight).toBe(340));
+    expect(screen.getByRole("region", { name: "Offene Zahlungen" })).toHaveStyle({
+      height: "340px",
+    });
+
+    view.unmount();
+    render(<App />);
+    await screen.findByDisplayValue("Müller, Anna");
+    expect(screen.getByRole("region", { name: "Offene Zahlungen" })).toHaveStyle({
+      height: "340px",
+    });
+  });
+
+  it("ändert die Höhe am Ziehgriff auch mit der Tastatur", async () => {
+    const { backend } = await renderReady();
+    const handle = screen.getByRole("separator", {
+      name: "Höhe der offenen Zahlungen ändern",
+    });
+
+    fireEvent.keyDown(handle, { key: "ArrowUp" });
+
+    await waitFor(() => expect(backend.preferences.paymentsPanelHeight).toBe(280));
+    expect(handle).toHaveAttribute("aria-valuenow", "280");
+  });
+
   it("minimiert mit einem Klick ohne sensible Inhaltsreste und stellt den Zustand nach Remount wieder her", async () => {
     const { backend, view } = await renderReady();
     const region = screen.getByRole("region", { name: "Offene Zahlungen" });
@@ -215,7 +250,8 @@ describe("Zahlungsbereich und persistente UI-Präferenzen", () => {
       altKey: true,
     });
     await waitFor(() => expect(backend.preferences.vehicleColumnOrder[0]).toBe("vehicleName"));
-    await user.click(screen.getByRole("button", { name: "Backup" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Backup" }));
     await screen.findByText("Backup erstellt");
 
     fireEvent.click(screen.getByRole("button", { name: "Erweitern" }));
@@ -226,7 +262,8 @@ describe("Zahlungsbereich und persistente UI-Präferenzen", () => {
     });
     await waitFor(() => expect(backend.preferences.paymentsPanelCollapsed).toBe(false));
 
-    await user.click(screen.getByRole("button", { name: "Wiederherstellen" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Wiederherstellen" }));
     await user.click(await screen.findByRole("button", { name: "Jetzt wiederherstellen" }));
     expect(await screen.findByRole("button", { name: "Erweitern" })).toBeInTheDocument();
     const headers = screen
@@ -238,6 +275,32 @@ describe("Zahlungsbereich und persistente UI-Präferenzen", () => {
 });
 
 describe("Fahrzeugspalten", () => {
+  it("blendet Spalten per Rechtsklick aus und stellt die persistierte Auswahl wieder her", async () => {
+    const user = userEvent.setup();
+    const { backend, view } = await renderReady();
+    const header = screen.getByRole("columnheader", { name: /Kennzeichen, Spalte verschieben/ });
+
+    fireEvent.contextMenu(header, { clientX: 120, clientY: 80 });
+    const menu = screen.getByRole("dialog", { name: "Spalten auswählen" });
+    await user.click(within(menu).getByRole("checkbox", { name: "Kennzeichen" }));
+
+    expect(
+      screen.queryByRole("columnheader", { name: /Kennzeichen, Spalte verschieben/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("M-AB 1")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(backend.preferences.vehicleHiddenColumns).toEqual(["licensePlate"]),
+    );
+
+    view.unmount();
+    render(<App />);
+    await screen.findByDisplayValue("Müller, Anna");
+    expect(
+      screen.queryByRole("columnheader", { name: /Kennzeichen, Spalte verschieben/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("M-AB 1")).not.toBeInTheDocument();
+  });
+
   it("rendert Header und Zeilen aus derselben gespeicherten Reihenfolge", async () => {
     installFakeBackend({
       ...baseSeed,
@@ -344,11 +407,14 @@ describe("Kunden-Autocomplete", () => {
     const initialLoads = backend.calls.filter((call) => call === "list_customer_suggestions").length;
 
     await user.type(customer, "mü");
-    expect(screen.getByRole("option", { name: /Müller, Anna/ })).toBeInTheDocument();
+    const option = screen.getByRole("option", { name: /Müller, Anna/ });
+    expect(option).toBeInTheDocument();
+    expect(option.closest(".payments-list")).not.toBeInTheDocument();
+    expect(option.closest(".customer-suggestions")?.parentElement).toBe(document.body);
     expect(backend.calls.filter((call) => call === "list_customer_suggestions")).toHaveLength(
       initialLoads,
     );
-    await user.click(screen.getByRole("option", { name: /Müller, Anna/ }));
+    await user.click(option);
     expect(customer).toHaveValue("Müller, Anna");
     expect(String((customer as HTMLInputElement).value)).not.toContain("VW Golf");
     await waitFor(() =>
@@ -383,7 +449,7 @@ describe("Kunden-Autocomplete", () => {
     expect(suggestionCalls()).toBe(1);
 
     await user.click(screen.getByRole("button", { name: "+ Fahrzeug" }));
-    const draftRow = screen.getAllByRole("row")[1];
+    const draftRow = (document.activeElement as HTMLInputElement).closest("tr")!;
     await user.type(within(draftRow).getByPlaceholderText("Kunde"), "Neukunde{Enter}");
     await user.type(within(draftRow).getByPlaceholderText("Fahrzeug"), "Corsa{Enter}");
     await user.type(within(draftRow).getByPlaceholderText("Kennzeichen"), "M-N 9");
@@ -403,9 +469,11 @@ describe("Kunden-Autocomplete", () => {
     await user.click(await screen.findByRole("button", { name: "Rückgängig" }));
     await waitFor(() => expect(suggestionCalls()).toBe(6));
 
-    await user.click(screen.getByRole("button", { name: "Backup" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Backup" }));
     await screen.findByText("Backup erstellt");
-    await user.click(screen.getByRole("button", { name: "Wiederherstellen" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Wiederherstellen" }));
     await user.click(await screen.findByRole("button", { name: "Jetzt wiederherstellen" }));
     await waitFor(() => expect(suggestionCalls()).toBe(7));
   });

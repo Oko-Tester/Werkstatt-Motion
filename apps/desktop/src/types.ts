@@ -4,6 +4,7 @@ export interface Vehicle {
   customerName: string;
   vehicleName: string;
   licensePlate: string;
+  note: string;
   tuvRequired: boolean;
   partsOrdered: boolean;
   partsArrived: boolean;
@@ -30,7 +31,7 @@ export interface Payment {
 export type VehicleStatusField = "tuvRequired" | "partsOrdered" | "partsArrived" | "isDone";
 
 /** Direkt bearbeitbare Textfelder eines Fahrzeugs. */
-export type VehicleTextField = "customerName" | "vehicleName" | "licensePlate";
+export type VehicleTextField = "customerName" | "vehicleName" | "licensePlate" | "note";
 
 /** Stabile fachliche IDs der verschiebbaren Fahrzeugspalten. */
 export const VEHICLE_COLUMN_IDS = [
@@ -41,6 +42,7 @@ export const VEHICLE_COLUMN_IDS = [
   "partsOrdered",
   "partsArrived",
   "isDone",
+  "note",
 ] as const;
 
 export type VehicleColumnId = (typeof VEHICLE_COLUMN_IDS)[number];
@@ -100,6 +102,7 @@ export interface VehicleHistory {
   customerName: string;
   vehicleName: string;
   licensePlate: string;
+  note: string;
   tuvRequired: boolean;
   partsOrdered: boolean;
   partsArrived: boolean;
@@ -134,7 +137,9 @@ export interface CustomerSuggestion {
 /** Persistente Oberflächenpräferenzen aus SQLite. */
 export interface UiPreferences {
   paymentsPanelCollapsed: boolean;
+  paymentsPanelHeight: number;
   vehicleColumnOrder: VehicleColumnId[];
+  vehicleHiddenColumns: VehicleColumnId[];
 }
 
 /**
@@ -146,6 +151,7 @@ export interface VehicleDraft {
   customerName: string;
   vehicleName: string;
   licensePlate: string;
+  note: string;
   tuvRequired: boolean;
   partsOrdered: boolean;
   partsArrived: boolean;

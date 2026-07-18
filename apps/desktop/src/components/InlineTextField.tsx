@@ -1,5 +1,12 @@
 import { useId, useState } from "react";
-import type { KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
+import type { KeyboardEvent, MouseEvent } from "react";
+
+interface PreviewPosition {
+  left: number;
+  placement: "above" | "below";
+  edge: number;
+}
 
 interface InlineTextFieldProps {
   value: string;
@@ -7,6 +14,8 @@ interface InlineTextFieldProps {
   onCommit: (value: string) => void;
   placeholder?: string;
   autoFocus?: boolean;
+  /** Zeigt den vollständigen Feldinhalt beim Darüberfahren in einer großen Vorschau. */
+  previewOnHover?: boolean;
   /** Fehlermeldung direkt am Feld, z. B. aus der Backend-Validierung. */
   error?: string;
 }
@@ -22,10 +31,30 @@ export function InlineTextField({
   onCommit,
   placeholder,
   autoFocus,
+  previewOnHover = false,
   error,
 }: InlineTextFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
+  const [previewPosition, setPreviewPosition] = useState<PreviewPosition | null>(null);
   const errorId = useId();
+  const previewId = useId();
+  const displayedValue = draft ?? value;
+
+  function showPreview(event: MouseEvent<HTMLInputElement>) {
+    if (!previewOnHover || displayedValue.trim() === "") return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const previewWidth = Math.min(420, Math.max(0, window.innerWidth - 24));
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - previewWidth - 12));
+    const placement = rect.top >= 220 ? "above" : "below";
+    setPreviewPosition({
+      left,
+      placement,
+      edge:
+        placement === "above"
+          ? window.innerHeight - rect.top + 10
+          : rect.bottom + 10,
+    });
+  }
 
   function commit() {
     if (draft !== null && (draft.trim() !== value || error !== undefined)) {
@@ -51,21 +80,45 @@ export function InlineTextField({
     <div className="inline-field-wrap">
       <input
         className={error === undefined ? "inline-field" : "inline-field has-error"}
-        value={draft ?? value}
+        value={displayedValue}
         aria-label={label}
         aria-invalid={error !== undefined}
-        aria-describedby={error === undefined ? undefined : errorId}
+        aria-describedby={
+          [error === undefined ? null : errorId, previewPosition === null ? null : previewId]
+            .filter(Boolean)
+            .join(" ") || undefined
+        }
         placeholder={placeholder}
         autoFocus={autoFocus}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={handleKeyDown}
+        onMouseEnter={showPreview}
+        onMouseLeave={() => setPreviewPosition(null)}
       />
       {error !== undefined && (
         <span className="field-error" id={errorId} role="alert">
           {error}
         </span>
       )}
+      {previewPosition !== null &&
+        createPortal(
+          <div
+            id={previewId}
+            role="tooltip"
+            className="note-preview"
+            data-placement={previewPosition.placement}
+            style={
+              previewPosition.placement === "above"
+                ? { left: previewPosition.left, bottom: previewPosition.edge }
+                : { left: previewPosition.left, top: previewPosition.edge }
+            }
+          >
+            <div className="note-preview-label">Notiz</div>
+            <div className="note-preview-content">{displayedValue}</div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -7,7 +7,7 @@ use crate::error::{ApiError, ErrorCode};
 
 /// Dienstname im Anmeldedaten-/Schlüsselspeicher des Betriebssystems
 /// (Windows Credential Manager, macOS Keychain, Linux Secret Service).
-const SERVICE: &str = "de.werkstattmanager.desktop";
+const SERVICE: &str = "de.werkstattmotion.desktop";
 const MASTER_KEY_ENTRY: &str = "master-key";
 const RECOVERY_CODE_ENTRY: &str = "backup-recovery-code";
 

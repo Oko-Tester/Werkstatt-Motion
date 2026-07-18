@@ -22,6 +22,7 @@ export interface NewVehicleInput {
   customerName: string;
   vehicleName?: string;
   licensePlate?: string;
+  note?: string;
   tuvRequired?: boolean;
   partsOrdered?: boolean;
   partsArrived?: boolean;
@@ -29,7 +30,7 @@ export interface NewVehicleInput {
 }
 
 export type VehiclePatch = Partial<
-  Pick<Vehicle, "customerName" | "vehicleName" | "licensePlate">
+  Pick<Vehicle, "customerName" | "vehicleName" | "licensePlate" | "note">
 >;
 
 export interface NewPaymentInput {
@@ -88,8 +89,18 @@ export function updatePaymentsPanelCollapsed(collapsed: boolean): Promise<UiPref
   return invoke("update_payments_panel_collapsed", { collapsed });
 }
 
+export function updatePaymentsPanelHeight(height: number): Promise<UiPreferences> {
+  return invoke("update_payments_panel_height", { height });
+}
+
 export function updateVehicleColumnOrder(columnOrder: VehicleColumnId[]): Promise<UiPreferences> {
   return invoke("update_vehicle_column_order", { columnOrder });
+}
+
+export function updateVehicleHiddenColumns(
+  hiddenColumns: VehicleColumnId[],
+): Promise<UiPreferences> {
+  return invoke("update_vehicle_hidden_columns", { hiddenColumns });
 }
 
 export function listOpenPayments(): Promise<Payment[]> {

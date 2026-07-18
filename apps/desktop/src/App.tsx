@@ -5,7 +5,10 @@ import { AppShell } from "./components/AppShell";
 import { Header } from "./components/Header";
 import { HiddenPanel } from "./components/HiddenPanel";
 import { HistoryWorkspace } from "./components/HistoryWorkspace";
-import { PaymentsPanel } from "./components/PaymentsPanel";
+import {
+  DEFAULT_PAYMENTS_PANEL_HEIGHT,
+  PaymentsPanel,
+} from "./components/PaymentsPanel";
 import { UndoBar } from "./components/UndoBar";
 import { VehicleTable } from "./components/VehicleTable";
 import { parseEuroInput } from "./money";
@@ -55,6 +58,7 @@ function isVehicleDraftEmpty(draft: VehicleDraft): boolean {
     draft.customerName.trim() === "" &&
     draft.vehicleName.trim() === "" &&
     draft.licensePlate.trim() === "" &&
+    draft.note.trim() === "" &&
     !draft.tuvRequired &&
     !draft.partsOrdered &&
     !draft.partsArrived &&
@@ -85,9 +89,13 @@ export default function App() {
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
   const [customerSuggestions, setCustomerSuggestions] = useState<CustomerSuggestion[]>([]);
   const [paymentsCollapsed, setPaymentsCollapsed] = useState(false);
+  const [paymentsPanelHeight, setPaymentsPanelHeight] = useState(
+    DEFAULT_PAYMENTS_PANEL_HEIGHT,
+  );
   const [vehicleColumnOrder, setVehicleColumnOrder] = useState<VehicleColumnId[]>([
     ...VEHICLE_COLUMN_IDS,
   ]);
+  const [vehicleHiddenColumns, setVehicleHiddenColumns] = useState<VehicleColumnId[]>([]);
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [secretSessionToken, setSecretSessionToken] = useState<string | null>(null);
   const [hiddenStatus, setHiddenStatus] = useState<HiddenStatus | null>(null);
@@ -150,14 +158,18 @@ export default function App() {
         api.listCustomerSuggestions().catch(() => []),
         api.getUiPreferences().catch(() => ({
           paymentsPanelCollapsed: false,
+          paymentsPanelHeight: DEFAULT_PAYMENTS_PANEL_HEIGHT,
           vehicleColumnOrder: [...VEHICLE_COLUMN_IDS],
+          vehicleHiddenColumns: [],
         })),
       ]);
       setVehicles(vehicleList);
       setPayments(paymentList);
       setCustomerSuggestions(suggestions);
       setPaymentsCollapsed(preferences.paymentsPanelCollapsed);
+      setPaymentsPanelHeight(preferences.paymentsPanelHeight);
       setVehicleColumnOrder(preferences.vehicleColumnOrder);
+      setVehicleHiddenColumns(preferences.vehicleHiddenColumns);
       setLoadError(null);
     } catch (err) {
       // Persistenter, nicht blockierender Fehlerzustand mit „Erneut laden“ –
@@ -236,6 +248,16 @@ export default function App() {
     });
   }
 
+  function persistPaymentsPanelHeight(height: number) {
+    void api
+      .updatePaymentsPanelHeight(height)
+      .then((preferences) => setPaymentsPanelHeight(preferences.paymentsPanelHeight))
+      .catch((err) => {
+        // Die gewählte Größe bleibt für diese Sitzung erhalten.
+        showNotice(toApiError(err).message);
+      });
+  }
+
   function changeVehicleColumnOrder(next: VehicleColumnId[]) {
     const focusedColumn =
       document.activeElement instanceof HTMLElement
@@ -258,6 +280,14 @@ export default function App() {
         // Ein Persistenzfehler nimmt dem Nutzer nicht die aktuelle Sitzungsanordnung.
         showNotice(toApiError(err).message);
       });
+  }
+
+  function changeVehicleHiddenColumns(next: VehicleColumnId[]) {
+    setVehicleHiddenColumns(next);
+    void api.updateVehicleHiddenColumns(next).catch((err) => {
+      // Ein Persistenzfehler nimmt dem Nutzer nicht die aktuelle Sitzungsauswahl.
+      showNotice(toApiError(err).message);
+    });
   }
 
   function showUndo(message: string, undo: () => void) {
@@ -303,7 +333,7 @@ export default function App() {
       return vehicles;
     }
     return vehicles.filter((vehicle) =>
-      [vehicle.customerName, vehicle.vehicleName, vehicle.licensePlate].some((text) =>
+      [vehicle.customerName, vehicle.vehicleName, vehicle.licensePlate, vehicle.note].some((text) =>
         text.toLowerCase().includes(query),
       ),
     );
@@ -317,6 +347,7 @@ export default function App() {
       customerName: "",
       vehicleName: "",
       licensePlate: "",
+      note: "",
       tuvRequired: false,
       partsOrdered: false,
       partsArrived: false,
@@ -324,7 +355,7 @@ export default function App() {
     };
     // Suche leeren, damit die neue Zeile sicher sichtbar ist.
     setSearch("");
-    setVehicleDrafts((prev) => [draft, ...prev]);
+    setVehicleDrafts((prev) => [...prev, draft]);
     setAutoFocusId(draft.draftId);
   }
 
@@ -346,6 +377,7 @@ export default function App() {
         customerName: draft.customerName,
         vehicleName: draft.vehicleName,
         licensePlate: draft.licensePlate,
+        note: draft.note,
         tuvRequired: draft.tuvRequired,
         partsOrdered: draft.partsOrdered,
         partsArrived: draft.partsArrived,
@@ -353,7 +385,7 @@ export default function App() {
       });
       setVehicleDrafts((prev) => prev.filter((entry) => entry.draftId !== draft.draftId));
       clearFieldError(draft.draftId);
-      setVehicles((prev) => [created, ...prev]);
+      setVehicles((prev) => [...prev, created]);
       void refreshCustomerSuggestions();
     } catch (err) {
       const apiErr = toApiError(err);
@@ -1030,14 +1062,18 @@ export default function App() {
       api.listCustomerSuggestions().catch(() => []),
       api.getUiPreferences().catch(() => ({
         paymentsPanelCollapsed: false,
+        paymentsPanelHeight: DEFAULT_PAYMENTS_PANEL_HEIGHT,
         vehicleColumnOrder: [...VEHICLE_COLUMN_IDS],
+        vehicleHiddenColumns: [],
       })),
     ]);
     setVehicles(vehicleList);
     setPayments(paymentList);
     setCustomerSuggestions(suggestions);
     setPaymentsCollapsed(preferences.paymentsPanelCollapsed);
+    setPaymentsPanelHeight(preferences.paymentsPanelHeight);
     setVehicleColumnOrder(preferences.vehicleColumnOrder);
+    setVehicleHiddenColumns(preferences.vehicleHiddenColumns);
   }
 
   function handleCancelRestore() {
@@ -1081,9 +1117,11 @@ export default function App() {
               vehicles={visibleVehicles}
               drafts={vehicleDrafts}
               columnOrder={vehicleColumnOrder}
+              hiddenColumns={vehicleHiddenColumns}
               loading={loading}
               loadError={loadError}
               onRetryLoad={() => void loadCoreData()}
+              onAdd={addVehicle}
               autoFocusId={autoFocusId}
               fieldErrors={fieldErrors}
               onCommitText={commitVehicleText}
@@ -1092,6 +1130,7 @@ export default function App() {
               onDraftRowLeave={handleVehicleDraftRowLeave}
               onMove={moveVehicle}
               onColumnOrderChange={changeVehicleColumnOrder}
+              onHiddenColumnsChange={changeVehicleHiddenColumns}
             />
           </section>
           <div className={hiddenOpen ? "bottom-area is-split" : "bottom-area"}>
@@ -1100,9 +1139,12 @@ export default function App() {
               drafts={paymentDrafts}
               suggestions={customerSuggestions}
               collapsed={paymentsCollapsed}
+              height={paymentsPanelHeight}
               autoFocusId={autoFocusId}
               fieldErrors={fieldErrors}
               onToggleCollapsed={togglePaymentsCollapsed}
+              onHeightChange={setPaymentsPanelHeight}
+              onHeightCommit={persistPaymentsPanelHeight}
               onAdd={addPayment}
               onCommitText={commitPaymentText}
               onCommitAmount={commitPaymentAmount}

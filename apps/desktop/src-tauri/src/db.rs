@@ -103,6 +103,17 @@ const MIGRATIONS: &[&str] = &[
         (id, version, payments_panel_collapsed, vehicle_column_order)
     VALUES
         (1, 1, 0, '[\"customerName\",\"vehicleName\",\"licensePlate\",\"tuvRequired\",\"partsOrdered\",\"partsArrived\",\"isDone\"]');",
+    // Version 6: Vom Nutzer verstellbare Höhe des Zahlungsbereichs.
+    "ALTER TABLE ui_preferences
+        ADD COLUMN payments_panel_height INTEGER NOT NULL DEFAULT 240;
+     UPDATE ui_preferences SET version = 2 WHERE id = 1;",
+    // Version 7: Ausblendbare Fahrzeugspalten.
+    "ALTER TABLE ui_preferences
+        ADD COLUMN vehicle_hidden_columns TEXT NOT NULL DEFAULT '[]';
+     UPDATE ui_preferences SET version = 3 WHERE id = 1;",
+    // Version 8: Frei bearbeitbare Notiz je Fahrzeug und im unveränderlichen Snapshot.
+    "ALTER TABLE vehicles ADD COLUMN note TEXT NOT NULL DEFAULT '';
+     ALTER TABLE vehicle_history ADD COLUMN note TEXT NOT NULL DEFAULT '';",
 ];
 
 /// Öffnet (oder erzeugt) die Datenbankdatei, setzt die Pragmas und führt die
@@ -202,6 +213,7 @@ fn vehicle_from_row(row: &Row<'_>) -> rusqlite::Result<Vehicle> {
         customer_name: row.get("customer_name")?,
         vehicle_name: row.get("vehicle_name")?,
         license_plate: row.get("license_plate")?,
+        note: row.get("note")?,
         tuv_required: row.get("tuv_required")?,
         parts_ordered: row.get("parts_ordered")?,
         parts_arrived: row.get("parts_arrived")?,
@@ -233,6 +245,7 @@ fn vehicle_history_from_row(row: &Row<'_>) -> rusqlite::Result<VehicleHistory> {
         customer_name: row.get("customer_name")?,
         vehicle_name: row.get("vehicle_name")?,
         license_plate: row.get("license_plate")?,
+        note: row.get("note")?,
         tuv_required: row.get("tuv_required")?,
         parts_ordered: row.get("parts_ordered")?,
         parts_arrived: row.get("parts_arrived")?,
@@ -270,13 +283,14 @@ pub fn list_vehicles(conn: &Connection) -> Result<Vec<Vehicle>, ApiError> {
     Ok(vehicles)
 }
 
-/// Legt ein Fahrzeug an. Neue Fahrzeuge kommen an die Spitze der Liste. Ein
+/// Legt ein Fahrzeug an. Neue Fahrzeuge kommen ans Ende der Liste. Ein
 /// bereits abgeschlossen angelegtes Fahrzeug erhält im selben Commit seinen
 /// unveränderlichen History-Snapshot.
 pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, ApiError> {
     let customer_name = input.customer_name.trim().to_string();
     let vehicle_name = input.vehicle_name.trim().to_string();
     let license_plate = normalize_license_plate(&input.license_plate);
+    let note = input.note.trim().to_string();
     validate_vehicle_text(&customer_name, &vehicle_name, &license_plate)?;
 
     let id = Uuid::new_v4().to_string();
@@ -284,18 +298,19 @@ pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, A
     let timestamp = now(&tx)?;
     tx.execute(
         "INSERT INTO vehicles (
-            id, customer_name, vehicle_name, license_plate,
+            id, customer_name, vehicle_name, license_plate, note,
             tuv_required, parts_ordered, parts_arrived, is_done,
             position, created_at, updated_at
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-            (SELECT COALESCE(MIN(position), 1) - 1 FROM vehicles), ?9, ?9
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+            (SELECT COALESCE(MAX(position), -1) + 1 FROM vehicles), ?10, ?10
          )",
         params![
             id,
             customer_name,
             vehicle_name,
             license_plate,
+            note,
             input.tuv_required,
             input.parts_ordered,
             input.parts_arrived,
@@ -329,14 +344,18 @@ pub fn update_vehicle(
         .license_plate
         .map(|value| normalize_license_plate(&value))
         .unwrap_or(current.license_plate);
+    let note = patch
+        .note
+        .map(|value| value.trim().to_string())
+        .unwrap_or(current.note);
     validate_vehicle_text(&customer_name, &vehicle_name, &license_plate)?;
 
     let timestamp = now(conn)?;
     conn.execute(
         "UPDATE vehicles
-         SET customer_name = ?2, vehicle_name = ?3, license_plate = ?4, updated_at = ?5
+         SET customer_name = ?2, vehicle_name = ?3, license_plate = ?4, note = ?5, updated_at = ?6
          WHERE id = ?1",
-        params![id, customer_name, vehicle_name, license_plate, timestamp],
+        params![id, customer_name, vehicle_name, license_plate, note, timestamp],
     )?;
     get_vehicle(conn, id)
 }
@@ -374,11 +393,11 @@ fn insert_vehicle_history_snapshot(
 
     conn.execute(
         "INSERT OR IGNORE INTO vehicle_history (
-            id, source_vehicle_id, customer_name, vehicle_name, license_plate,
+            id, source_vehicle_id, customer_name, vehicle_name, license_plate, note,
             tuv_required, parts_ordered, parts_arrived, is_done, completed_at,
             archived_at, vehicle_created_at, snapshot_created_at
          )
-         SELECT ?1, id, customer_name, vehicle_name, license_plate,
+         SELECT ?1, id, customer_name, vehicle_name, license_plate, note,
                 tuv_required, parts_ordered, parts_arrived, is_done, ?3,
                 archived_at, created_at, ?3
          FROM vehicles WHERE id = ?2",
@@ -558,7 +577,7 @@ pub fn list_customer_suggestions(conn: &Connection) -> Result<Vec<CustomerSugges
 
 // ---------- UI-Präferenzen ----------
 
-pub const VEHICLE_COLUMN_ORDER_DEFAULT: [&str; 7] = [
+pub const VEHICLE_COLUMN_ORDER_DEFAULT: [&str; 8] = [
     "customerName",
     "vehicleName",
     "licensePlate",
@@ -566,8 +585,12 @@ pub const VEHICLE_COLUMN_ORDER_DEFAULT: [&str; 7] = [
     "partsOrdered",
     "partsArrived",
     "isDone",
+    "note",
 ];
-const UI_PREFERENCES_VERSION: i64 = 1;
+const UI_PREFERENCES_VERSION: i64 = 3;
+const DEFAULT_PAYMENTS_PANEL_HEIGHT: i64 = 240;
+const MIN_PAYMENTS_PANEL_HEIGHT: i64 = 160;
+const MAX_PAYMENTS_PANEL_HEIGHT: i64 = 1200;
 
 fn default_vehicle_column_order() -> Vec<String> {
     VEHICLE_COLUMN_ORDER_DEFAULT
@@ -594,6 +617,26 @@ pub fn normalize_vehicle_column_order(column_order: &[String]) -> Vec<String> {
     normalized
 }
 
+pub fn normalize_vehicle_hidden_columns(
+    hidden_columns: &[String],
+    column_order: &[String],
+) -> Vec<String> {
+    let mut normalized = Vec::with_capacity(VEHICLE_COLUMN_ORDER_DEFAULT.len() - 1);
+    for id in hidden_columns {
+        if VEHICLE_COLUMN_ORDER_DEFAULT.contains(&id.as_str()) && !normalized.contains(id) {
+            normalized.push(id.clone());
+        }
+    }
+    if normalized.len() == VEHICLE_COLUMN_ORDER_DEFAULT.len() {
+        let visible_fallback = column_order
+            .first()
+            .map(String::as_str)
+            .unwrap_or(VEHICLE_COLUMN_ORDER_DEFAULT[0]);
+        normalized.retain(|id| id != visible_fallback);
+    }
+    normalized
+}
+
 fn persist_ui_preferences(
     conn: &Connection,
     preferences: &UiPreferences,
@@ -601,18 +644,27 @@ fn persist_ui_preferences(
     let order = serde_json::to_string(&preferences.vehicle_column_order).map_err(|_| {
         ApiError::database("Oberflächenpräferenzen konnten nicht gespeichert werden")
     })?;
+    let hidden_columns =
+        serde_json::to_string(&preferences.vehicle_hidden_columns).map_err(|_| {
+            ApiError::database("Oberflächenpräferenzen konnten nicht gespeichert werden")
+        })?;
     conn.execute(
         "INSERT INTO ui_preferences
-            (id, version, payments_panel_collapsed, vehicle_column_order)
-         VALUES (1, ?1, ?2, ?3)
+            (id, version, payments_panel_collapsed, payments_panel_height,
+             vehicle_column_order, vehicle_hidden_columns)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(id) DO UPDATE SET
             version = excluded.version,
             payments_panel_collapsed = excluded.payments_panel_collapsed,
-            vehicle_column_order = excluded.vehicle_column_order",
+            payments_panel_height = excluded.payments_panel_height,
+            vehicle_column_order = excluded.vehicle_column_order,
+            vehicle_hidden_columns = excluded.vehicle_hidden_columns",
         params![
             UI_PREFERENCES_VERSION,
             preferences.payments_panel_collapsed,
-            order
+            preferences.payments_panel_height,
+            order,
+            hidden_columns
         ],
     )?;
     Ok(preferences.clone())
@@ -621,30 +673,44 @@ fn persist_ui_preferences(
 pub fn get_ui_preferences(conn: &Connection) -> Result<UiPreferences, ApiError> {
     let stored = conn
         .query_row(
-            "SELECT version, payments_panel_collapsed, vehicle_column_order
+            "SELECT version, payments_panel_collapsed, payments_panel_height,
+                    vehicle_column_order, vehicle_hidden_columns
              FROM ui_preferences WHERE id = 1",
             [],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, i64>(1)?,
-                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             },
         )
         .optional()?;
 
     let preferences = match stored {
-        Some((UI_PREFERENCES_VERSION, collapsed, json)) => {
-            let parsed = serde_json::from_str::<Vec<String>>(&json).unwrap_or_default();
+        Some((UI_PREFERENCES_VERSION, collapsed, height, order_json, hidden_json)) => {
+            let parsed_order = serde_json::from_str::<Vec<String>>(&order_json).unwrap_or_default();
+            let vehicle_column_order = normalize_vehicle_column_order(&parsed_order);
+            let parsed_hidden =
+                serde_json::from_str::<Vec<String>>(&hidden_json).unwrap_or_default();
             UiPreferences {
                 payments_panel_collapsed: collapsed == 1,
-                vehicle_column_order: normalize_vehicle_column_order(&parsed),
+                payments_panel_height: height
+                    .clamp(MIN_PAYMENTS_PANEL_HEIGHT, MAX_PAYMENTS_PANEL_HEIGHT),
+                vehicle_hidden_columns: normalize_vehicle_hidden_columns(
+                    &parsed_hidden,
+                    &vehicle_column_order,
+                ),
+                vehicle_column_order,
             }
         }
         _ => UiPreferences {
             payments_panel_collapsed: false,
+            payments_panel_height: DEFAULT_PAYMENTS_PANEL_HEIGHT,
             vehicle_column_order: default_vehicle_column_order(),
+            vehicle_hidden_columns: Vec::new(),
         },
     };
     persist_ui_preferences(conn, &preferences)
@@ -659,12 +725,32 @@ pub fn update_payments_panel_collapsed(
     persist_ui_preferences(conn, &preferences)
 }
 
+pub fn update_payments_panel_height(
+    conn: &Connection,
+    height: i64,
+) -> Result<UiPreferences, ApiError> {
+    let mut preferences = get_ui_preferences(conn)?;
+    preferences.payments_panel_height =
+        height.clamp(MIN_PAYMENTS_PANEL_HEIGHT, MAX_PAYMENTS_PANEL_HEIGHT);
+    persist_ui_preferences(conn, &preferences)
+}
+
 pub fn update_vehicle_column_order(
     conn: &Connection,
     column_order: &[String],
 ) -> Result<UiPreferences, ApiError> {
     let mut preferences = get_ui_preferences(conn)?;
     preferences.vehicle_column_order = normalize_vehicle_column_order(column_order);
+    persist_ui_preferences(conn, &preferences)
+}
+
+pub fn update_vehicle_hidden_columns(
+    conn: &Connection,
+    hidden_columns: &[String],
+) -> Result<UiPreferences, ApiError> {
+    let mut preferences = get_ui_preferences(conn)?;
+    preferences.vehicle_hidden_columns =
+        normalize_vehicle_hidden_columns(hidden_columns, &preferences.vehicle_column_order);
     persist_ui_preferences(conn, &preferences)
 }
 
@@ -868,16 +954,16 @@ mod tests {
     }
 
     #[test]
-    fn neues_fahrzeug_steht_oben() {
+    fn neues_fahrzeug_steht_unten() {
         let conn = test_conn();
         let first = create_vehicle(&conn, vehicle_input("Erster", "Golf", "")).unwrap();
         let second = create_vehicle(&conn, vehicle_input("Zweiter", "Passat", "")).unwrap();
         let list = list_vehicles(&conn).unwrap();
         assert_eq!(
             list.iter().map(|v| v.id.as_str()).collect::<Vec<_>>(),
-            vec![second.id.as_str(), first.id.as_str()],
+            vec![first.id.as_str(), second.id.as_str()],
         );
-        assert!(second.position < first.position);
+        assert!(second.position > first.position);
     }
 
     #[test]
@@ -1028,6 +1114,7 @@ mod tests {
                 customer_name: Some("Geändert".to_string()),
                 vehicle_name: Some("Passat".to_string()),
                 license_plate: Some("B-Z 9".to_string()),
+                note: None,
             },
         )
         .unwrap();
@@ -1126,7 +1213,9 @@ mod tests {
         let conn = test_conn();
         let default = get_ui_preferences(&conn).unwrap();
         assert!(!default.payments_panel_collapsed);
+        assert_eq!(default.payments_panel_height, DEFAULT_PAYMENTS_PANEL_HEIGHT);
         assert_eq!(default.vehicle_column_order, default_vehicle_column_order());
+        assert!(default.vehicle_hidden_columns.is_empty());
 
         let order = vec![
             "isDone".to_string(),
@@ -1150,6 +1239,29 @@ mod tests {
                 .payments_panel_collapsed
         );
         assert!(get_ui_preferences(&conn).unwrap().payments_panel_collapsed);
+        assert_eq!(
+            update_payments_panel_height(&conn, 420)
+                .unwrap()
+                .payments_panel_height,
+            420
+        );
+        assert_eq!(
+            get_ui_preferences(&conn).unwrap().payments_panel_height,
+            420
+        );
+        let all_hidden = default_vehicle_column_order();
+        let hidden = update_vehicle_hidden_columns(&conn, &all_hidden).unwrap();
+        assert_eq!(
+            hidden.vehicle_hidden_columns.len(),
+            VEHICLE_COLUMN_ORDER_DEFAULT.len() - 1
+        );
+        assert!(!hidden
+            .vehicle_hidden_columns
+            .contains(&"isDone".to_string()));
+        assert_eq!(
+            get_ui_preferences(&conn).unwrap().vehicle_hidden_columns,
+            hidden.vehicle_hidden_columns
+        );
 
         // Beschädigte/neuere persistierte Werte fallen auf einen validierten
         // Default zurück und werden direkt repariert.
@@ -1191,6 +1303,7 @@ mod tests {
                 customer_name: Some("ANNA".to_string()),
                 vehicle_name: Some("Passat".to_string()),
                 license_plate: Some("M-B 2".to_string()),
+                note: None,
             },
         )
         .unwrap();

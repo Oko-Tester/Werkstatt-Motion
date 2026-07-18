@@ -13,6 +13,7 @@ export interface VehicleRowData {
   customerName: string;
   vehicleName: string;
   licensePlate: string;
+  note: string;
   tuvRequired: boolean;
   partsOrdered: boolean;
   partsArrived: boolean;
@@ -125,6 +126,17 @@ export function VehicleRow({
             onCommit={(value) => onCommitText(vehicle.id, "licensePlate", value)}
           />
         );
+      case "note":
+        return (
+          <InlineTextField
+            value={vehicle.note}
+            label={`Notiz (${rowName})`}
+            placeholder="Notiz hinzufügen"
+            previewOnHover
+            error={errors?.note}
+            onCommit={(value) => onCommitText(vehicle.id, "note", value)}
+          />
+        );
       case "tuvRequired":
         return (
           <StatusToggle
@@ -139,7 +151,7 @@ export function VehicleRow({
           <StatusToggle
             checked={vehicle.partsOrdered}
             tone="primary"
-            label={`Teile bestellt (${rowName})`}
+            label={`Teile bestellen (${rowName})`}
             onChange={(value) => onToggleStatus(vehicle.id, "partsOrdered", value)}
           />
         );
@@ -211,7 +223,7 @@ export function VehicleRow({
         <td
           key={columnId}
           data-column-id={columnId}
-          className={columnId === "customerName" || columnId === "vehicleName" || columnId === "licensePlate" ? undefined : "cell-center"}
+          className={columnId === "customerName" || columnId === "vehicleName" || columnId === "licensePlate" || columnId === "note" ? undefined : "cell-center"}
         >
           {renderColumn(columnId)}
         </td>

@@ -22,6 +22,7 @@ export interface VehicleSeed {
   customerName: string;
   vehicleName?: string;
   licensePlate?: string;
+  note?: string;
   tuvRequired?: boolean;
   partsOrdered?: boolean;
   partsArrived?: boolean;
@@ -121,6 +122,19 @@ function normalizeColumnOrder(input: readonly string[]): VehicleColumnId[] {
   return normalized;
 }
 
+function normalizeHiddenColumns(
+  input: readonly string[],
+  columnOrder: readonly VehicleColumnId[],
+): VehicleColumnId[] {
+  const hidden = input.filter(
+    (id, index, items): id is VehicleColumnId =>
+      (VEHICLE_COLUMN_IDS as readonly string[]).includes(id) && items.indexOf(id) === index,
+  );
+  return hidden.length === VEHICLE_COLUMN_IDS.length
+    ? hidden.filter((id) => id !== columnOrder[0])
+    : hidden;
+}
+
 export function installFakeBackend(seed?: {
   vehicles?: VehicleSeed[];
   payments?: PaymentSeed[];
@@ -141,6 +155,7 @@ export function installFakeBackend(seed?: {
       customerName: entry.customerName,
       vehicleName: entry.vehicleName ?? "",
       licensePlate: entry.licensePlate ?? "",
+      note: entry.note ?? "",
       tuvRequired: entry.tuvRequired ?? false,
       partsOrdered: entry.partsOrdered ?? false,
       partsArrived: entry.partsArrived ?? false,
@@ -161,6 +176,7 @@ export function installFakeBackend(seed?: {
         customerName: vehicle.customerName,
         vehicleName: vehicle.vehicleName,
         licensePlate: vehicle.licensePlate,
+        note: vehicle.note,
         tuvRequired: vehicle.tuvRequired,
         partsOrdered: vehicle.partsOrdered,
         partsArrived: vehicle.partsArrived,
@@ -203,7 +219,12 @@ export function installFakeBackend(seed?: {
 
   const preferences: UiPreferences = {
     paymentsPanelCollapsed: seed?.uiPreferences?.paymentsPanelCollapsed ?? false,
+    paymentsPanelHeight: seed?.uiPreferences?.paymentsPanelHeight ?? 240,
     vehicleColumnOrder: normalizeColumnOrder(seed?.uiPreferences?.vehicleColumnOrder ?? []),
+    vehicleHiddenColumns: normalizeHiddenColumns(
+      seed?.uiPreferences?.vehicleHiddenColumns ?? [],
+      normalizeColumnOrder(seed?.uiPreferences?.vehicleColumnOrder ?? []),
+    ),
   };
 
   const backups: Snapshot[] = [];
@@ -274,6 +295,7 @@ export function installFakeBackend(seed?: {
       customerName: vehicle.customerName,
       vehicleName: vehicle.vehicleName,
       licensePlate: vehicle.licensePlate,
+      note: vehicle.note,
       tuvRequired: vehicle.tuvRequired,
       partsOrdered: vehicle.partsOrdered,
       partsArrived: vehicle.partsArrived,
@@ -357,7 +379,9 @@ export function installFakeBackend(seed?: {
       secretHistory: snapshot.secretHistory.map((item) => ({ ...item })),
       preferences: {
         paymentsPanelCollapsed: snapshot.preferences.paymentsPanelCollapsed,
+        paymentsPanelHeight: snapshot.preferences.paymentsPanelHeight,
         vehicleColumnOrder: [...snapshot.preferences.vehicleColumnOrder],
+        vehicleHiddenColumns: [...snapshot.preferences.vehicleHiddenColumns],
       },
     };
   }
@@ -382,7 +406,9 @@ export function installFakeBackend(seed?: {
     hiddenEntries.splice(0, hiddenEntries.length, ...copy.hiddenEntries);
     secretHistory.splice(0, secretHistory.length, ...copy.secretHistory);
     preferences.paymentsPanelCollapsed = copy.preferences.paymentsPanelCollapsed;
+    preferences.paymentsPanelHeight = copy.preferences.paymentsPanelHeight;
     preferences.vehicleColumnOrder = copy.preferences.vehicleColumnOrder;
+    preferences.vehicleHiddenColumns = copy.preferences.vehicleHiddenColumns;
   }
 
   mockIPC((cmd, payload) => {
@@ -403,6 +429,7 @@ export function installFakeBackend(seed?: {
         const customerName = String(input.customerName ?? "").trim();
         const vehicleName = String(input.vehicleName ?? "").trim();
         const licensePlate = normalizeLicensePlate(String(input.licensePlate ?? ""));
+        const note = String(input.note ?? "").trim();
         validateVehicleText(customerName, vehicleName, licensePlate);
         const timestamp = nextTimestamp();
         const vehicle: Vehicle = {
@@ -410,11 +437,12 @@ export function installFakeBackend(seed?: {
           customerName,
           vehicleName,
           licensePlate,
+          note,
           tuvRequired: Boolean(input.tuvRequired),
           partsOrdered: Boolean(input.partsOrdered),
           partsArrived: Boolean(input.partsArrived),
           isDone: Boolean(input.isDone),
-          position: Math.min(0, ...vehicles.map((entry) => entry.position)) - 1,
+          position: Math.max(-1, ...vehicles.map((entry) => entry.position)) + 1,
           createdAt: timestamp,
           updatedAt: timestamp,
           archivedAt: null,
@@ -432,11 +460,13 @@ export function installFakeBackend(seed?: {
           patch.licensePlate === undefined
             ? vehicle.licensePlate
             : normalizeLicensePlate(patch.licensePlate);
+        const note = (patch.note ?? vehicle.note).trim();
         validateVehicleText(customerName, vehicleName, licensePlate);
         Object.assign(vehicle, {
           customerName,
           vehicleName,
           licensePlate,
+          note,
           updatedAt: nextTimestamp(),
         });
         return { ...vehicle };
@@ -478,19 +508,47 @@ export function installFakeBackend(seed?: {
       case "get_ui_preferences":
         return {
           paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          paymentsPanelHeight: preferences.paymentsPanelHeight,
           vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+          vehicleHiddenColumns: [...preferences.vehicleHiddenColumns],
         };
       case "update_payments_panel_collapsed":
         preferences.paymentsPanelCollapsed = Boolean(args.collapsed);
         return {
           paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          paymentsPanelHeight: preferences.paymentsPanelHeight,
           vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+          vehicleHiddenColumns: [...preferences.vehicleHiddenColumns],
+        };
+      case "update_payments_panel_height":
+        preferences.paymentsPanelHeight = Math.min(
+          1200,
+          Math.max(160, Number(args.height)),
+        );
+        return {
+          paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          paymentsPanelHeight: preferences.paymentsPanelHeight,
+          vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+          vehicleHiddenColumns: [...preferences.vehicleHiddenColumns],
         };
       case "update_vehicle_column_order":
         preferences.vehicleColumnOrder = normalizeColumnOrder(args.columnOrder as string[]);
         return {
           paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          paymentsPanelHeight: preferences.paymentsPanelHeight,
           vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+          vehicleHiddenColumns: [...preferences.vehicleHiddenColumns],
+        };
+      case "update_vehicle_hidden_columns":
+        preferences.vehicleHiddenColumns = normalizeHiddenColumns(
+          args.hiddenColumns as string[],
+          preferences.vehicleColumnOrder,
+        );
+        return {
+          paymentsPanelCollapsed: preferences.paymentsPanelCollapsed,
+          paymentsPanelHeight: preferences.paymentsPanelHeight,
+          vehicleColumnOrder: [...preferences.vehicleColumnOrder],
+          vehicleHiddenColumns: [...preferences.vehicleHiddenColumns],
         };
       case "reorder_vehicles": {
         const ids = args.ids as string[];

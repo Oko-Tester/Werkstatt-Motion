@@ -1,5 +1,10 @@
-import { useState } from "react";
-import type { DragEvent, KeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import type {
+  DragEvent as ReactDragEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+} from "react";
 import type {
   FieldErrors,
   Vehicle,
@@ -15,9 +20,11 @@ interface VehicleTableProps {
   vehicles: Vehicle[];
   drafts: VehicleDraft[];
   columnOrder: VehicleColumnId[];
+  hiddenColumns: VehicleColumnId[];
   loading: boolean;
   loadError: string | null;
   onRetryLoad: () => void;
+  onAdd: () => void;
   autoFocusId: string | null;
   fieldErrors: FieldErrors;
   onCommitText: (id: string, field: VehicleTextField, value: string) => void;
@@ -26,6 +33,7 @@ interface VehicleTableProps {
   onDraftRowLeave: (draftId: string) => void;
   onMove: (dragId: string, targetId: string) => void;
   onColumnOrderChange: (columnOrder: VehicleColumnId[]) => void;
+  onHiddenColumnsChange: (hiddenColumns: VehicleColumnId[]) => void;
 }
 
 const COLUMN_META: Record<
@@ -35,8 +43,9 @@ const COLUMN_META: Record<
   customerName: { label: "Kunde", align: "left" },
   vehicleName: { label: "Fahrzeug", align: "left" },
   licensePlate: { label: "Kennzeichen", align: "left", widthClass: "col-kennzeichen" },
+  note: { label: "Notiz", align: "left", widthClass: "col-note" },
   tuvRequired: { label: "TÜV nötig", align: "center", widthClass: "col-status" },
-  partsOrdered: { label: "Teile bestellt", align: "center", widthClass: "col-status" },
+  partsOrdered: { label: "Teile bestellen", align: "center", widthClass: "col-status" },
   partsArrived: { label: "Teile angekommen", align: "center", widthClass: "col-status" },
   isDone: { label: "Fertig", align: "center", widthClass: "col-status" },
 };
@@ -47,9 +56,11 @@ export function VehicleTable({
   vehicles,
   drafts,
   columnOrder,
+  hiddenColumns,
   loading,
   loadError,
   onRetryLoad,
+  onAdd,
   autoFocusId,
   fieldErrors,
   onCommitText,
@@ -58,6 +69,7 @@ export function VehicleTable({
   onDraftRowLeave,
   onMove,
   onColumnOrderChange,
+  onHiddenColumnsChange,
 }: VehicleTableProps) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -66,6 +78,57 @@ export function VehicleTable({
     id: VehicleColumnId;
     position: DropPosition;
   } | null>(null);
+  const [columnMenu, setColumnMenu] = useState<{ x: number; y: number } | null>(null);
+  const columnMenuRef = useRef<HTMLDivElement>(null);
+  const hiddenColumnSet = new Set(hiddenColumns);
+  const visibleColumns = columnOrder.filter((id) => !hiddenColumnSet.has(id));
+  const tableColumnCount = visibleColumns.length + 2;
+
+  useEffect(() => {
+    if (columnMenu === null) return;
+
+    columnMenuRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+
+    function handleMouseDown(event: MouseEvent) {
+      if (!columnMenuRef.current?.contains(event.target as Node)) setColumnMenu(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setColumnMenu(null);
+    }
+
+    function closeColumnMenu() {
+      setColumnMenu(null);
+    }
+
+    window.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("blur", closeColumnMenu);
+    return () => {
+      window.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("blur", closeColumnMenu);
+    };
+  }, [columnMenu]);
+
+  function openColumnMenu(event: ReactMouseEvent<HTMLTableSectionElement>) {
+    event.preventDefault();
+    setColumnMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 248)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 340)),
+    });
+  }
+
+  function toggleColumn(id: VehicleColumnId) {
+    if (hiddenColumnSet.has(id)) {
+      onHiddenColumnsChange(hiddenColumns.filter((columnId) => columnId !== id));
+      return;
+    }
+    if (visibleColumns.length <= 1) return;
+    onHiddenColumnsChange(
+      columnOrder.filter((columnId) => hiddenColumnSet.has(columnId) || columnId === id),
+    );
+  }
 
   function moveByKeyboard(id: string, direction: -1 | 1) {
     const index = vehicles.findIndex((vehicle) => vehicle.id === id);
@@ -86,7 +149,10 @@ export function VehicleTable({
     onColumnOrderChange(next);
   }
 
-  function handleColumnDragOver(event: DragEvent<HTMLTableCellElement>, id: VehicleColumnId) {
+  function handleColumnDragOver(
+    event: ReactDragEvent<HTMLTableCellElement>,
+    id: VehicleColumnId,
+  ) {
     if (dragColumnId === null) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
@@ -95,11 +161,14 @@ export function VehicleTable({
     setDropColumn({ id, position });
   }
 
-  function handleColumnKeyDown(event: KeyboardEvent<HTMLButtonElement>, id: VehicleColumnId) {
+  function handleColumnKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    id: VehicleColumnId,
+  ) {
     if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
     event.preventDefault();
-    const index = columnOrder.indexOf(id);
-    const target = columnOrder[index + (event.key === "ArrowLeft" ? -1 : 1)];
+    const index = visibleColumns.indexOf(id);
+    const target = visibleColumns[index + (event.key === "ArrowLeft" ? -1 : 1)];
     if (target) moveColumn(id, target, event.key === "ArrowLeft" ? "before" : "after");
   }
 
@@ -108,6 +177,7 @@ export function VehicleTable({
     customerName: draft.customerName,
     vehicleName: draft.vehicleName,
     licensePlate: draft.licensePlate,
+    note: draft.note,
     tuvRequired: draft.tuvRequired,
     partsOrdered: draft.partsOrdered,
     partsArrived: draft.partsArrived,
@@ -120,15 +190,15 @@ export function VehicleTable({
       <table className="vehicle-table">
         <colgroup>
           <col className="col-drag" />
-          {columnOrder.map((id) => (
+          {visibleColumns.map((id) => (
             <col key={id} className={COLUMN_META[id].widthClass} />
           ))}
           <col className="col-archiv" />
         </colgroup>
-        <thead>
+        <thead onContextMenu={openColumnMenu}>
           <tr>
             <th scope="col"><span className="visually-hidden">Priorität</span></th>
-            {columnOrder.map((id) => {
+            {visibleColumns.map((id) => {
               const meta = COLUMN_META[id];
               const isTarget = dragColumnId !== null && dropColumn?.id === id && dragColumnId !== id;
               const className = [
@@ -172,7 +242,7 @@ export function VehicleTable({
                     type="button"
                     className="column-drag-handle"
                     aria-label={`${meta.label}, Spalte verschieben`}
-                    title="Ziehen oder Alt+Pfeiltaste: Spalte verschieben"
+                    title="Ziehen oder Alt+Pfeiltaste: Spalte verschieben. Rechtsklick: Spalten auswählen"
                     onKeyDown={(event) => handleColumnKeyDown(event, id)}
                   >
                     <span>{meta.label}</span>
@@ -186,11 +256,11 @@ export function VehicleTable({
         </thead>
         <tbody>
           {loading && (
-            <tr><td colSpan={9} className="empty-cell">Laden …</td></tr>
+            <tr><td colSpan={tableColumnCount} className="empty-cell">Laden …</td></tr>
           )}
           {!loading && loadError !== null && (
             <tr>
-              <td colSpan={9} className="empty-cell">
+              <td colSpan={tableColumnCount} className="empty-cell">
                 <div className="load-error" role="alert">
                   <span>{loadError}</span>
                   <button type="button" className="btn btn-secondary" onClick={onRetryLoad}>
@@ -201,35 +271,13 @@ export function VehicleTable({
             </tr>
           )}
           {isEmpty && (
-            <tr><td colSpan={9} className="empty-cell">Keine Fahrzeuge gefunden</td></tr>
+            <tr><td colSpan={tableColumnCount} className="empty-cell">Keine Fahrzeuge gefunden</td></tr>
           )}
-          {draftRows.map((draft) => (
-            <VehicleRow
-              key={draft.id}
-              vehicle={draft}
-              columnOrder={columnOrder}
-              isDraft
-              autoFocus={draft.id === autoFocusId}
-              isDragging={false}
-              isDropTarget={false}
-              errors={fieldErrors[draft.id]}
-              onCommitText={onCommitText}
-              onToggleStatus={onToggleStatus}
-              onArchive={onArchive}
-              onRowLeave={onDraftRowLeave}
-              onDragStart={() => undefined}
-              onDragEnd={() => undefined}
-              onDragOver={() => undefined}
-              onDrop={() => undefined}
-              onMoveUp={() => undefined}
-              onMoveDown={() => undefined}
-            />
-          ))}
           {vehicles.map((vehicle) => (
             <VehicleRow
               key={vehicle.id}
               vehicle={vehicle}
-              columnOrder={columnOrder}
+              columnOrder={visibleColumns}
               isDraft={false}
               autoFocus={vehicle.id === autoFocusId}
               isDragging={vehicle.id === dragId}
@@ -251,8 +299,69 @@ export function VehicleTable({
               onMoveDown={() => moveByKeyboard(vehicle.id, 1)}
             />
           ))}
+          {draftRows.map((draft) => (
+            <VehicleRow
+              key={draft.id}
+              vehicle={draft}
+              columnOrder={visibleColumns}
+              isDraft
+              autoFocus={draft.id === autoFocusId}
+              isDragging={false}
+              isDropTarget={false}
+              errors={fieldErrors[draft.id]}
+              onCommitText={onCommitText}
+              onToggleStatus={onToggleStatus}
+              onArchive={onArchive}
+              onRowLeave={onDraftRowLeave}
+              onDragStart={() => undefined}
+              onDragEnd={() => undefined}
+              onDragOver={() => undefined}
+              onDrop={() => undefined}
+              onMoveUp={() => undefined}
+              onMoveDown={() => undefined}
+            />
+          ))}
         </tbody>
       </table>
+      {columnMenu !== null &&
+        createPortal(
+          <div
+            ref={columnMenuRef}
+            className="column-visibility-menu"
+            role="dialog"
+            aria-label="Spalten auswählen"
+            style={{ left: columnMenu.x, top: columnMenu.y }}
+          >
+            <div className="column-visibility-title">Spalten anzeigen</div>
+            {columnOrder.map((id) => {
+              const isVisible = !hiddenColumnSet.has(id);
+              const isLastVisible = isVisible && visibleColumns.length === 1;
+              return (
+                <label
+                  key={id}
+                  className={
+                    isLastVisible
+                      ? "column-visibility-option is-disabled"
+                      : "column-visibility-option"
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={isVisible}
+                    disabled={isLastVisible}
+                    onChange={() => toggleColumn(id)}
+                  />
+                  <span>{COLUMN_META[id].label}</span>
+                </label>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
+      <button type="button" className="vehicle-add-row" onClick={onAdd}>
+        <span aria-hidden="true">+</span>
+        <span>Neuen Kunden hinzufügen</span>
+      </button>
     </div>
   );
 }

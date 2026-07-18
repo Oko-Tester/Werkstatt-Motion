@@ -1,4 +1,5 @@
-import type { FocusEvent } from "react";
+import { useRef } from "react";
+import type { FocusEvent, KeyboardEvent, PointerEvent } from "react";
 import { formatCents } from "../money";
 import type {
   CustomerSuggestion,
@@ -16,15 +17,22 @@ interface PaymentsPanelProps {
   drafts: PaymentDraft[];
   suggestions: CustomerSuggestion[];
   collapsed: boolean;
+  height: number;
   autoFocusId: string | null;
   fieldErrors: FieldErrors;
   onToggleCollapsed: () => void;
+  onHeightChange: (height: number) => void;
+  onHeightCommit: (height: number) => void;
   onAdd: () => void;
   onCommitText: (id: string, field: PaymentTextField, value: string) => void;
   onCommitAmount: (id: string, raw: string) => void;
   onMarkPaid: (id: string) => void;
   onDraftRowLeave: (draftId: string) => void;
 }
+
+export const DEFAULT_PAYMENTS_PANEL_HEIGHT = 240;
+export const MIN_PAYMENTS_PANEL_HEIGHT = 160;
+const RESIZE_KEYBOARD_STEP = 40;
 
 interface PaymentRowData {
   id: string;
@@ -39,15 +47,64 @@ export function PaymentsPanel({
   drafts,
   suggestions,
   collapsed,
+  height,
   autoFocusId,
   fieldErrors,
   onToggleCollapsed,
+  onHeightChange,
+  onHeightCommit,
   onAdd,
   onCommitText,
   onCommitAmount,
   onMarkPaid,
   onDraftRowLeave,
 }: PaymentsPanelProps) {
+  const resizeStartRef = useRef<{ y: number; height: number } | null>(null);
+  const resizedHeightRef = useRef(height);
+  resizedHeightRef.current = height;
+
+  function maximumHeight(): number {
+    return Math.max(MIN_PAYMENTS_PANEL_HEIGHT, window.innerHeight - 220);
+  }
+
+  function clampHeight(value: number): number {
+    return Math.round(
+      Math.min(maximumHeight(), Math.max(MIN_PAYMENTS_PANEL_HEIGHT, value)),
+    );
+  }
+
+  function handleResizeStart(event: PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    resizeStartRef.current = { y: event.clientY, height };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.currentTarget.classList.add("is-resizing");
+  }
+
+  function handleResizeMove(event: PointerEvent<HTMLDivElement>) {
+    const start = resizeStartRef.current;
+    if (start === null) return;
+    const next = clampHeight(start.height + start.y - event.clientY);
+    resizedHeightRef.current = next;
+    onHeightChange(next);
+  }
+
+  function handleResizeEnd(event: PointerEvent<HTMLDivElement>) {
+    if (resizeStartRef.current === null) return;
+    resizeStartRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    event.currentTarget.classList.remove("is-resizing");
+    onHeightCommit(resizedHeightRef.current);
+  }
+
+  function handleResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const direction = event.key === "ArrowUp" ? 1 : -1;
+    const next = clampHeight(height + direction * RESIZE_KEYBOARD_STEP);
+    onHeightChange(next);
+    onHeightCommit(next);
+  }
+
   if (collapsed) {
     return (
       <section className="payments-panel is-collapsed" aria-label="Offene Zahlungen">
@@ -90,7 +147,29 @@ export function PaymentsPanel({
   }
 
   return (
-    <section className="payments-panel" aria-label="Offene Zahlungen">
+    <section
+      className="payments-panel"
+      aria-label="Offene Zahlungen"
+      style={{ height: `${height}px` }}
+    >
+      <div
+        className="payments-resize-handle"
+        role="separator"
+        aria-label="Höhe der offenen Zahlungen ändern"
+        aria-orientation="horizontal"
+        aria-valuemin={MIN_PAYMENTS_PANEL_HEIGHT}
+        aria-valuemax={maximumHeight()}
+        aria-valuenow={height}
+        tabIndex={0}
+        title="Nach oben oder unten ziehen"
+        onPointerDown={handleResizeStart}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeEnd}
+        onPointerCancel={handleResizeEnd}
+        onKeyDown={handleResizeKeyDown}
+      >
+        <span aria-hidden="true" />
+      </div>
       <div className="payments-header">
         <h2 className="payments-title">Offene Zahlungen</h2>
         <span className="payments-total">

@@ -51,7 +51,7 @@ export function HistoryWorkspace({
     () =>
       vehicleHistory.filter((entry) =>
         includesQuery(
-          [entry.customerName, entry.vehicleName, entry.licensePlate, entry.completedAt],
+          [entry.customerName, entry.vehicleName, entry.licensePlate, entry.note, entry.completedAt],
           search,
         ),
       ),
@@ -118,6 +118,7 @@ export function HistoryWorkspace({
                     <th>Kunde</th>
                     <th>Fahrzeug</th>
                     <th>Kennzeichen</th>
+                    <th>Notiz</th>
                     <th>Status damals</th>
                     <th>Abgeschlossen</th>
                     <th>Archiviert</th>
@@ -126,7 +127,7 @@ export function HistoryWorkspace({
                 <tbody>
                   {visibleVehicles.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="history-empty">Keine Fahrzeug-Snapshots</td>
+                      <td colSpan={7} className="history-empty">Keine Fahrzeug-Snapshots</td>
                     </tr>
                   ) : (
                     visibleVehicles.map((entry) => (
@@ -134,6 +135,7 @@ export function HistoryWorkspace({
                         <td>{entry.customerName}</td>
                         <td>{entry.vehicleName || "–"}</td>
                         <td>{entry.licensePlate || "–"}</td>
+                        <td>{entry.note || "–"}</td>
                         <td className="history-status-values">{formatVehicleStatus(entry)}</td>
                         <td>{formatDate(entry.completedAt)}</td>
                         <td>{formatDate(entry.archivedAt)}</td>

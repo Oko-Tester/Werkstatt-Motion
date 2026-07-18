@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Werkstatt Manager",
+  "productName": "Werkstatt Motion",
   "version": "1.0.0",
-  "identifier": "de.werkstattmanager.desktop",
+  "identifier": "de.werkstattmotion.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev:vite",
     "devUrl": "http://localhost:1420",
@@ -13,11 +13,12 @@
     "windows": [
       {
         "label": "main",
-        "title": "Werkstatt Manager",
+        "title": "Werkstatt Motion",
         "width": 1280,
         "height": 800,
         "minWidth": 1100,
         "minHeight": 700,
+        "dragDropEnabled": false,
         "resizable": true,
         "center": true
       }
@@ -29,11 +30,11 @@
   "bundle": {
     "active": true,
     "targets": ["deb"],
-    "publisher": "Werkstatt Manager",
-    "copyright": "© 2026 Werkstatt Manager",
+    "publisher": "Werkstatt Motion",
+    "copyright": "© 2026 Werkstatt Motion",
     "category": "Utility",
     "shortDescription": "Fahrzeuge, Prioritäten und offene Zahlungen für die Werkstatt",
-    "longDescription": "Werkstatt Manager ist eine lokale Desktop-App für kleine Werkstätten: eine Hauptansicht mit Fahrzeugliste, Priorisierung per Drag-and-drop, offenen Zahlungen, Backup und Wiederherstellung – vollständig offline, ohne Konto und ohne Internetverbindung.",
+    "longDescription": "Werkstatt Motion ist eine lokale Desktop-App für kleine Werkstätten: eine Hauptansicht mit Fahrzeugliste, Priorisierung per Drag-and-drop, offenen Zahlungen, Backup und Wiederherstellung – vollständig offline, ohne Konto und ohne Internetverbindung.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

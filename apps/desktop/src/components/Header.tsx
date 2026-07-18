@@ -43,8 +43,11 @@ export function Header({
 }: HeaderProps) {
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const longPress = useLongPress(onOpenHiddenArea, LONG_PRESS_MS);
 
   useEffect(
@@ -55,6 +58,32 @@ export function Header({
     },
     [],
   );
+
+  useEffect(() => {
+    if (!actionsMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!actionsMenuRef.current?.contains(event.target as Node)) {
+        setActionsMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setActionsMenuOpen(false);
+        actionsMenuButtonRef.current?.focus();
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [actionsMenuOpen]);
 
   function showStatus(text: string, kind: StatusMessage["kind"]) {
     setStatus({ text, kind });
@@ -68,6 +97,7 @@ export function Header({
     if (busy) {
       return;
     }
+    setActionsMenuOpen(false);
     setBusy(true);
     try {
       const result = await onBackup();
@@ -86,6 +116,7 @@ export function Header({
     if (busy) {
       return;
     }
+    setActionsMenuOpen(false);
     setBusy(true);
     try {
       const preview = await onPrepareRestore();
@@ -158,7 +189,7 @@ export function Header({
           <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
         </svg>
       </div>
-      <h1 className="app-title">Werkstatt Manager</h1>
+      <h1 className="app-title">Werkstatt Motion</h1>
       <div className="header-search">
         <SearchInput value={search} onChange={onSearchChange} inputRef={searchRef} />
       </div>
@@ -205,42 +236,69 @@ export function Header({
             >
               {status?.text}
             </span>
-            <button type="button" className="btn btn-secondary" onClick={handleBackupClick}>
-              <svg
-                aria-hidden="true"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+            <div className="actions-menu" ref={actionsMenuRef}>
+              <button
+                ref={actionsMenuButtonRef}
+                type="button"
+                className="icon-button actions-menu-trigger"
+                aria-label="Weitere Aktionen"
+                aria-haspopup="menu"
+                aria-expanded={actionsMenuOpen}
+                onClick={() => setActionsMenuOpen((open) => !open)}
               >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" x2="12" y1="15" y2="3" />
-              </svg>
-              Backup
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={handleRestoreClick}>
-              <svg
-                aria-hidden="true"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" x2="12" y1="3" y2="15" />
-              </svg>
-              Wiederherstellen
-            </button>
+                <svg
+                  aria-hidden="true"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <circle cx="5" cy="12" r="1.8" />
+                  <circle cx="12" cy="12" r="1.8" />
+                  <circle cx="19" cy="12" r="1.8" />
+                </svg>
+              </button>
+              {actionsMenuOpen ? (
+                <div className="actions-menu-dropdown" role="menu" aria-label="Weitere Aktionen">
+                  <button type="button" role="menuitem" onClick={handleBackupClick}>
+                    <svg
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" x2="12" y1="15" y2="3" />
+                    </svg>
+                    Backup
+                  </button>
+                  <button type="button" role="menuitem" onClick={handleRestoreClick}>
+                    <svg
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" x2="12" y1="3" y2="15" />
+                    </svg>
+                    Wiederherstellen
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <PrimaryButton onClick={onAddVehicle}>+ Fahrzeug</PrimaryButton>
           </>
         )}

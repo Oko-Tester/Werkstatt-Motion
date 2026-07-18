@@ -241,11 +241,30 @@ describe("Backup und Wiederherstellung", () => {
     clearMocks();
   });
 
+  it("zeigt Backup und Wiederherstellung im Drei-Punkte-Menü", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    const trigger = screen.getByRole("button", { name: "Weitere Aktionen" });
+    await user.click(trigger);
+
+    expect(screen.getByRole("menu", { name: "Weitere Aktionen" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Backup" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Wiederherstellen" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
   it("erstellt ein Backup mit einem Klick und zeigt eine dezente Bestätigung", async () => {
     const user = userEvent.setup();
     await renderApp();
 
-    await user.click(screen.getByRole("button", { name: "Backup" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Backup" }));
 
     expect(await screen.findByText("Backup erstellt")).toBeInTheDocument();
     expect(backend.calls).toContain("create_backup");
@@ -257,7 +276,8 @@ describe("Backup und Wiederherstellung", () => {
     await renderApp();
     backend.planCancel("create_backup");
 
-    await user.click(screen.getByRole("button", { name: "Backup" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Backup" }));
 
     await waitFor(() => expect(backend.calls).toContain("create_backup"));
     expect(backend.backups).toHaveLength(0);
@@ -269,7 +289,8 @@ describe("Backup und Wiederherstellung", () => {
     await renderApp();
 
     // Backup erstellen, danach Daten verändern.
-    await user.click(screen.getByRole("button", { name: "Backup" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Backup" }));
     await screen.findByText("Backup erstellt");
     await user.click(screen.getByRole("button", { name: "M-AB 1234 archivieren" }));
     await waitFor(() =>
@@ -277,7 +298,8 @@ describe("Backup und Wiederherstellung", () => {
     );
 
     // Klick 1: Datei wählen (nativer Dialog) und validieren.
-    await user.click(screen.getByRole("button", { name: "Wiederherstellen" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Wiederherstellen" }));
     const confirmButton = await screen.findByRole("button", { name: "Jetzt wiederherstellen" });
     expect(screen.getByText(/Backup vom .* ersetzt die aktuellen Daten/)).toBeInTheDocument();
 
@@ -292,10 +314,12 @@ describe("Backup und Wiederherstellung", () => {
   it("bricht die vorbereitete Wiederherstellung mit einem Klick ab", async () => {
     const user = userEvent.setup();
     await renderApp();
-    await user.click(screen.getByRole("button", { name: "Backup" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Backup" }));
     await screen.findByText("Backup erstellt");
 
-    await user.click(screen.getByRole("button", { name: "Wiederherstellen" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Wiederherstellen" }));
     await screen.findByRole("button", { name: "Jetzt wiederherstellen" });
 
     await user.click(screen.getByRole("button", { name: "Wiederherstellung abbrechen" }));
@@ -314,7 +338,8 @@ describe("Backup und Wiederherstellung", () => {
       message: "Backup ist beschädigt (Prüfsumme stimmt nicht)",
     });
 
-    await user.click(screen.getByRole("button", { name: "Wiederherstellen" }));
+    await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: "Wiederherstellen" }));
 
     expect(await screen.findByText(/Backup ist beschädigt/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Jetzt wiederherstellen" })).not.toBeInTheDocument();

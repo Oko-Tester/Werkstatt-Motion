@@ -8,6 +8,7 @@ pub struct Vehicle {
     pub customer_name: String,
     pub vehicle_name: String,
     pub license_plate: String,
+    pub note: String,
     pub tuv_required: bool,
     pub parts_ordered: bool,
     pub parts_arrived: bool,
@@ -28,6 +29,7 @@ pub struct VehicleHistory {
     pub customer_name: String,
     pub vehicle_name: String,
     pub license_plate: String,
+    pub note: String,
     pub tuv_required: bool,
     pub parts_ordered: bool,
     pub parts_arrived: bool,
@@ -54,7 +56,9 @@ pub struct CustomerSuggestion {
 #[serde(rename_all = "camelCase")]
 pub struct UiPreferences {
     pub payments_panel_collapsed: bool,
+    pub payments_panel_height: i64,
     pub vehicle_column_order: Vec<String>,
+    pub vehicle_hidden_columns: Vec<String>,
 }
 
 /// Eingabe für ein neues Fahrzeug. Statusfelder dürfen bereits gesetzt sein,
@@ -67,6 +71,8 @@ pub struct NewVehicle {
     pub vehicle_name: String,
     #[serde(default)]
     pub license_plate: String,
+    #[serde(default)]
+    pub note: String,
     #[serde(default)]
     pub tuv_required: bool,
     #[serde(default)]
@@ -84,6 +90,7 @@ pub struct VehiclePatch {
     pub customer_name: Option<String>,
     pub vehicle_name: Option<String>,
     pub license_plate: Option<String>,
+    pub note: Option<String>,
 }
 
 /// Statusfelder, die mit einem Klick umgeschaltet werden.
