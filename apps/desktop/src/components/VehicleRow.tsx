@@ -1,10 +1,13 @@
 import { useState } from "react";
-import type { DragEvent, FocusEvent, KeyboardEvent } from "react";
-import type { VehicleStatusField, VehicleTextField } from "../types";
+import type { DragEvent, FocusEvent, KeyboardEvent, ReactNode } from "react";
+import type {
+  VehicleColumnId,
+  VehicleStatusField,
+  VehicleTextField,
+} from "../types";
 import { InlineTextField } from "./InlineTextField";
 import { StatusToggle } from "./StatusToggle";
 
-/** Gemeinsame Sicht auf gespeicherte Fahrzeuge und Entwurfszeilen. */
 export interface VehicleRowData {
   id: string;
   customerName: string;
@@ -18,7 +21,7 @@ export interface VehicleRowData {
 
 interface VehicleRowProps {
   vehicle: VehicleRowData;
-  /** Entwurfszeilen sind noch nicht gespeichert und nicht sortierbar. */
+  columnOrder: VehicleColumnId[];
   isDraft: boolean;
   autoFocus: boolean;
   isDragging: boolean;
@@ -27,7 +30,6 @@ interface VehicleRowProps {
   onCommitText: (id: string, field: VehicleTextField, value: string) => void;
   onToggleStatus: (id: string, field: VehicleStatusField, value: boolean) => void;
   onArchive: (id: string) => void;
-  /** Wird gerufen, wenn der Fokus die Zeile komplett verlässt. */
   onRowLeave?: (id: string) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
@@ -39,6 +41,7 @@ interface VehicleRowProps {
 
 export function VehicleRow({
   vehicle,
+  columnOrder,
   isDraft,
   autoFocus,
   isDragging,
@@ -55,10 +58,8 @@ export function VehicleRow({
   onMoveUp,
   onMoveDown,
 }: VehicleRowProps) {
-  // Ziehen ist nur über den Griff möglich, nicht über die ganze Zeile.
   const [dragEnabled, setDragEnabled] = useState(false);
   const rowName = vehicle.licensePlate || vehicle.customerName || "Neues Fahrzeug";
-
   const rowClassName = [
     "vehicle-row",
     vehicle.isDone ? "is-fertig" : "",
@@ -79,9 +80,7 @@ export function VehicleRow({
   }
 
   function handleDragOver(event: DragEvent<HTMLTableRowElement>) {
-    if (isDraft) {
-      return;
-    }
+    if (isDraft) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     onDragOver();
@@ -93,6 +92,78 @@ export function VehicleRow({
     }
   }
 
+  function renderColumn(columnId: VehicleColumnId): ReactNode {
+    switch (columnId) {
+      case "customerName":
+        return (
+          <InlineTextField
+            value={vehicle.customerName}
+            label="Kunde"
+            placeholder="Kunde"
+            autoFocus={autoFocus}
+            error={errors?.customerName}
+            onCommit={(value) => onCommitText(vehicle.id, "customerName", value)}
+          />
+        );
+      case "vehicleName":
+        return (
+          <InlineTextField
+            value={vehicle.vehicleName}
+            label="Fahrzeug"
+            placeholder="Fahrzeug"
+            error={errors?.vehicleName}
+            onCommit={(value) => onCommitText(vehicle.id, "vehicleName", value)}
+          />
+        );
+      case "licensePlate":
+        return (
+          <InlineTextField
+            value={vehicle.licensePlate}
+            label="Kennzeichen"
+            placeholder="Kennzeichen"
+            error={errors?.licensePlate}
+            onCommit={(value) => onCommitText(vehicle.id, "licensePlate", value)}
+          />
+        );
+      case "tuvRequired":
+        return (
+          <StatusToggle
+            checked={vehicle.tuvRequired}
+            tone="attention"
+            label={`TÜV nötig (${rowName})`}
+            onChange={(value) => onToggleStatus(vehicle.id, "tuvRequired", value)}
+          />
+        );
+      case "partsOrdered":
+        return (
+          <StatusToggle
+            checked={vehicle.partsOrdered}
+            tone="primary"
+            label={`Teile bestellt (${rowName})`}
+            onChange={(value) => onToggleStatus(vehicle.id, "partsOrdered", value)}
+          />
+        );
+      case "partsArrived":
+        return (
+          <StatusToggle
+            checked={vehicle.partsArrived}
+            tone="primary"
+            label={`Teile angekommen (${rowName})`}
+            onChange={(value) => onToggleStatus(vehicle.id, "partsArrived", value)}
+          />
+        );
+      case "isDone":
+        return (
+          <StatusToggle
+            checked={vehicle.isDone}
+            tone="success"
+            label={`Fertig (${rowName})`}
+            onChange={(value) => onToggleStatus(vehicle.id, "isDone", value)}
+          />
+        );
+    }
+  }
+
   return (
     <tr
       className={rowClassName}
@@ -100,6 +171,7 @@ export function VehicleRow({
       onBlur={handleRowBlur}
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("application/x-werkstatt-vehicle-row", vehicle.id);
         onDragStart();
       }}
       onDragEnd={() => {
@@ -108,9 +180,7 @@ export function VehicleRow({
       }}
       onDragOver={handleDragOver}
       onDrop={(event) => {
-        if (isDraft) {
-          return;
-        }
+        if (isDraft) return;
         event.preventDefault();
         onDrop();
       }}
@@ -126,14 +196,7 @@ export function VehicleRow({
             onMouseUp={() => setDragEnabled(false)}
             onKeyDown={handleHandleKeyDown}
           >
-            <svg
-              aria-hidden="true"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="none"
-            >
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <circle cx="9" cy="5" r="1.5" />
               <circle cx="9" cy="12" r="1.5" />
               <circle cx="9" cy="19" r="1.5" />
@@ -144,66 +207,15 @@ export function VehicleRow({
           </button>
         )}
       </td>
-      <td>
-        <InlineTextField
-          value={vehicle.customerName}
-          label="Kunde"
-          placeholder="Kunde"
-          autoFocus={autoFocus}
-          error={errors?.customerName}
-          onCommit={(value) => onCommitText(vehicle.id, "customerName", value)}
-        />
-      </td>
-      <td>
-        <InlineTextField
-          value={vehicle.vehicleName}
-          label="Fahrzeug"
-          placeholder="Fahrzeug"
-          error={errors?.vehicleName}
-          onCommit={(value) => onCommitText(vehicle.id, "vehicleName", value)}
-        />
-      </td>
-      <td>
-        <InlineTextField
-          value={vehicle.licensePlate}
-          label="Kennzeichen"
-          placeholder="Kennzeichen"
-          error={errors?.licensePlate}
-          onCommit={(value) => onCommitText(vehicle.id, "licensePlate", value)}
-        />
-      </td>
-      <td className="cell-center">
-        <StatusToggle
-          checked={vehicle.tuvRequired}
-          tone="attention"
-          label={`TÜV nötig (${rowName})`}
-          onChange={(value) => onToggleStatus(vehicle.id, "tuvRequired", value)}
-        />
-      </td>
-      <td className="cell-center">
-        <StatusToggle
-          checked={vehicle.partsOrdered}
-          tone="primary"
-          label={`Teile bestellt (${rowName})`}
-          onChange={(value) => onToggleStatus(vehicle.id, "partsOrdered", value)}
-        />
-      </td>
-      <td className="cell-center">
-        <StatusToggle
-          checked={vehicle.partsArrived}
-          tone="primary"
-          label={`Teile angekommen (${rowName})`}
-          onChange={(value) => onToggleStatus(vehicle.id, "partsArrived", value)}
-        />
-      </td>
-      <td className="cell-center">
-        <StatusToggle
-          checked={vehicle.isDone}
-          tone="success"
-          label={`Fertig (${rowName})`}
-          onChange={(value) => onToggleStatus(vehicle.id, "isDone", value)}
-        />
-      </td>
+      {columnOrder.map((columnId) => (
+        <td
+          key={columnId}
+          data-column-id={columnId}
+          className={columnId === "customerName" || columnId === "vehicleName" || columnId === "licensePlate" ? undefined : "cell-center"}
+        >
+          {renderColumn(columnId)}
+        </td>
+      ))}
       <td className="cell-archive">
         <button
           type="button"

@@ -26,8 +26,8 @@ pub struct OsKeyStore;
 
 impl KeyStore for OsKeyStore {
     fn read(&self, entry: &str) -> Result<Option<Zeroizing<String>>, ApiError> {
-        let item = keyring::Entry::new(SERVICE, entry)
-            .map_err(|_| ApiError::keystore_unavailable())?;
+        let item =
+            keyring::Entry::new(SERVICE, entry).map_err(|_| ApiError::keystore_unavailable())?;
         match item.get_password() {
             Ok(value) => Ok(Some(Zeroizing::new(value))),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -36,8 +36,8 @@ impl KeyStore for OsKeyStore {
     }
 
     fn write(&self, entry: &str, value: &str) -> Result<(), ApiError> {
-        let item = keyring::Entry::new(SERVICE, entry)
-            .map_err(|_| ApiError::keystore_unavailable())?;
+        let item =
+            keyring::Entry::new(SERVICE, entry).map_err(|_| ApiError::keystore_unavailable())?;
         item.set_password(value)
             .map_err(|_| ApiError::keystore_unavailable())
     }
@@ -81,7 +81,10 @@ fn generate_recovery_code() -> Zeroizing<String> {
 /// Sicherheitsregel: Existieren bereits verschlüsselte Einträge, wird bei
 /// fehlendem Schlüssel NIEMALS ein neuer erzeugt – das würde die Daten
 /// endgültig unlesbar machen. Stattdessen kommt ein klarer Fehlerzustand.
-pub fn load_or_init(store: &dyn KeyStore, has_encrypted_data: bool) -> Result<KeyMaterial, ApiError> {
+pub fn load_or_init(
+    store: &dyn KeyStore,
+    has_encrypted_data: bool,
+) -> Result<KeyMaterial, ApiError> {
     match store.read(MASTER_KEY_ENTRY)? {
         Some(encoded) => {
             let mut bytes = BASE64
@@ -100,7 +103,10 @@ pub fn load_or_init(store: &dyn KeyStore, has_encrypted_data: bool) -> Result<Ke
                     code
                 }
             };
-            Ok(KeyMaterial { master_key, recovery_code })
+            Ok(KeyMaterial {
+                master_key,
+                recovery_code,
+            })
         }
         None => {
             if has_encrypted_data {
@@ -111,7 +117,10 @@ pub fn load_or_init(store: &dyn KeyStore, has_encrypted_data: bool) -> Result<Ke
             store.write(MASTER_KEY_ENTRY, &encoded)?;
             let recovery_code = generate_recovery_code();
             store.write(RECOVERY_CODE_ENTRY, &recovery_code)?;
-            Ok(KeyMaterial { master_key, recovery_code })
+            Ok(KeyMaterial {
+                master_key,
+                recovery_code,
+            })
         }
     }
 }
@@ -228,11 +237,7 @@ pub mod tests {
     fn fehlender_wiederherstellungscode_wird_nachgezogen() {
         let store = MockKeyStore::default();
         let first = load_or_init(&store, false).unwrap();
-        store
-            .entries
-            .lock()
-            .unwrap()
-            .remove(RECOVERY_CODE_ENTRY);
+        store.entries.lock().unwrap().remove(RECOVERY_CODE_ENTRY);
 
         let again = load_or_init(&store, true).unwrap();
         assert_eq!(again.master_key, first.master_key);

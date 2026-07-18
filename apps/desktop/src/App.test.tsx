@@ -326,7 +326,7 @@ describe("App: Offene Zahlungen", () => {
     const user = userEvent.setup();
     await renderApp();
     await user.click(screen.getByRole("button", { name: "+ Offener Betrag" }));
-    expect(screen.getByRole("textbox", { name: "Kunde (Neue Zahlung)" })).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Kunde (Neue Zahlung)" })).toHaveFocus();
 
     await user.keyboard("Neukunde{Enter}");
     await user.keyboard("1.234,56{Enter}");
@@ -347,7 +347,7 @@ describe("App: Offene Zahlungen", () => {
     await user.click(screen.getByRole("searchbox", { name: "Fahrzeuge durchsuchen" }));
 
     await waitFor(() =>
-      expect(screen.queryByRole("textbox", { name: "Kunde (Neue Zahlung)" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("combobox", { name: "Kunde (Neue Zahlung)" })).not.toBeInTheDocument(),
     );
     expect(backend.calls).not.toContain("create_payment");
   });

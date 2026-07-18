@@ -17,13 +17,25 @@ vollständig offline. Version 1.0.0.
   „Teile angekommen“ oder „Fertig“ schaltet den Status um und speichert
   sofort. Kein Status ändert einen anderen mit.
 - **Zahlung verwalten:** „+ Offener Betrag“ legt eine Zeile an (Kunde,
-  Betrag, Notiz). Beträge wie „486,50“ oder „1.234,56“ werden Cent-genau
-  gespeichert. „✓ Bezahlt“ entfernt die Zahlung aus der Liste; die kurze
-  Rückgängig-Leiste unten macht das bei Bedarf sofort rückgängig.
+  Betrag, Notiz). Beim Tippen schlägt das Kundenfeld vorhandene Kunden aus
+  aktiven, erledigten und archivierten Fahrzeugen vor; Maus, Pfeiltasten und
+  Enter werden unterstützt, freie Eingaben bleiben möglich. Beträge wie
+  „486,50“ oder „1.234,56“ werden Cent-genau gespeichert. „✓ Bezahlt“ entfernt
+  die Zahlung aus der Liste; die kurze Rückgängig-Leiste unten macht das bei
+  Bedarf sofort rückgängig.
+- **Zahlungen verbergen:** Der Pfeil im Kopf von „Offene Zahlungen“ minimiert
+  den Bereich sofort. Im minimierten Zustand sind weder Namen noch Beträge,
+  Summen, Anzahlen oder Notizen sichtbar. Die Einstellung bleibt beim nächsten
+  App-Start erhalten.
+- **Fahrzeugspalten anordnen:** Fachliche Spalten am Tabellenkopf ziehen –
+  oder mit Alt+Pfeiltaste verschieben. Zeilengriff und Archivspalte bleiben
+  fest; die Reihenfolge wird automatisch gespeichert.
 - **Versteckten Bereich öffnen und schließen:** Das Werkstattlogo oben
   links **drei Sekunden gedrückt halten** (Maus oder Touch). Es erscheint
   bewusst keine Fortschrittsanzeige. Das sichtbare X im Bereich schließt
-  ihn mit einem Klick.
+  ihn mit einem Klick und löscht alle entschlüsselten Daten aus dem UI-Zustand.
+  „Historie“ öffnet innerhalb des App-Fensters die Fahrzeug- und Secret-Historie
+  ohne Modal; „Zurück“ schließt sie mit einem Klick.
 - **Backup erstellen:** „Backup“ in der Kopfzeile klicken und im
   Systemdialog einen Speicherort wählen (z. B. USB-Stick). Fertig.
 - **Daten wiederherstellen:** „Wiederherstellen“ klicken, Backup-Datei
@@ -88,7 +100,8 @@ vollständig offline. Version 1.0.0.
         │   ├── components/    AppShell, Header, SearchInput, PrimaryButton,
         │   │                  InlineTextField, InlineMoneyField, StatusToggle,
         │   │                  VehicleTable, VehicleRow, PaymentsPanel,
-        │   │                  HiddenPanel, UndoBar
+        │   │                  CustomerAutocomplete, HiddenPanel,
+        │   │                  HistoryWorkspace, UndoBar
         │   └── test/          Testing-Library-Setup + Fake-Backend (mockIPC)
         └── src-tauri/         Tauri 2 (Rust)
             ├── tauri.conf.json          Produktkonfiguration (Fenster, Bundle)
@@ -156,6 +169,14 @@ Wiederherstellung wieder in den Schlüsselspeicher übernommen.
 - Versteckte Einträge werden ausschließlich im Rust-Backend mit
   **XChaCha20-Poly1305** (authentifizierte Verschlüsselung, AEAD)
   verschlüsselt; React sieht nur entschlüsselte Werte zur Anzeige.
+- Klartext-Commands akzeptieren ausschließlich ein zufälliges, flüchtiges
+  Sitzungstoken aus dem Rust-Arbeitsspeicher. React hält dieses Token nur im
+  laufenden State; weder Token noch Secret-Status werden in SQLite oder
+  `localStorage` gespeichert und jeder App-Neustart startet gesperrt.
+- Archivierte Secret-Einträge erhalten einen eigenen, unveränderlichen und
+  erneut verschlüsselten History-Snapshot mit frischer Nonce und eigener
+  AAD-Domäne. Bezeichnung, Betrag, Notiz und Archivierungszeitpunkt besitzen
+  auch dort keine Klartextspalten.
 - Bezeichnung, Betrag und Notiz werden gemeinsam als JSON-Payload
   verschlüsselt – es gibt **keine Klartextspalten** für diese Felder.
 - Pro Verschlüsselung entsteht eine frische 24-Byte-Zufallsnonce; die AAD

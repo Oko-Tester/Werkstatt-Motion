@@ -111,11 +111,17 @@ fn snapshot_db_bytes(conn: &Connection) -> Result<Vec<u8>, ApiError> {
 
 /// Erstellt die vollständige Backup-Datei als Bytes (JSON).
 pub fn create_backup_bytes(conn: &Connection, keys: &KeyMaterial) -> Result<Vec<u8>, ApiError> {
+    // Vor dem Snapshot auch archivierte Altbestände in die verschlüsselte
+    // History überführen und beide Ciphertext-Domänen authentifizieren.
+    hidden::verify_all(conn, &keys.master_key)?;
+    hidden::backfill_archived_history(conn, &keys.master_key)?;
+    hidden::verify_all(conn, &keys.master_key)?;
     let db_bytes = snapshot_db_bytes(conn)?;
 
     let salt = crypto::random_bytes(16);
     let wrapping_key = crypto::derive_wrapping_key(&keys.recovery_code, &salt);
-    let (wrapped_key, nonce) = crypto::seal(&wrapping_key, keys.master_key.as_bytes(), KEY_RECOVERY_AAD)?;
+    let (wrapped_key, nonce) =
+        crypto::seal(&wrapping_key, keys.master_key.as_bytes(), KEY_RECOVERY_AAD)?;
 
     let file = BackupFile {
         format: BACKUP_FORMAT.to_string(),
@@ -137,12 +143,11 @@ pub fn create_backup_bytes(conn: &Connection, keys: &KeyMaterial) -> Result<Vec<
         .map_err(|_| ApiError::backup("Backup konnte nicht erstellt werden"))
 }
 
-fn unwrap_master_key(
-    recovery: &KeyRecovery,
-    recovery_code: &str,
-) -> Result<SecretKey, ApiError> {
+fn unwrap_master_key(recovery: &KeyRecovery, recovery_code: &str) -> Result<SecretKey, ApiError> {
     if recovery.kdf != KEY_RECOVERY_KDF {
-        return Err(ApiError::backup("Backup verwendet ein unbekanntes Schlüsselformat"));
+        return Err(ApiError::backup(
+            "Backup verwendet ein unbekanntes Schlüsselformat",
+        ));
     }
     let decode = |value: &str| {
         BASE64
@@ -183,7 +188,9 @@ pub fn validate_backup_bytes(
         .decode(file.db.as_bytes())
         .map_err(|_| ApiError::backup("Backup-Datei ist ungültig oder beschädigt"))?;
     if sha256_hex(&db_bytes) != file.db_sha256 {
-        return Err(ApiError::backup("Backup ist beschädigt (Prüfsumme stimmt nicht)"));
+        return Err(ApiError::backup(
+            "Backup ist beschädigt (Prüfsumme stimmt nicht)",
+        ));
     }
 
     // Kopie anlegen, migrieren und prüfen – die echte Datenbank bleibt unberührt.
@@ -204,16 +211,19 @@ pub fn validate_backup_bytes(
         db::migrate(&mut conn)
             .map_err(|_| ApiError::backup("Backup enthält keine lesbare Datenbank"))?;
 
-        let count = |sql: &str| -> Result<i64, ApiError> {
-            Ok(conn.query_row(sql, [], |row| row.get(0))?)
-        };
+        let count =
+            |sql: &str| -> Result<i64, ApiError> { Ok(conn.query_row(sql, [], |row| row.get(0))?) };
         let vehicle_count = count("SELECT COUNT(*) FROM vehicles WHERE archived_at IS NULL")?;
         let payment_count =
             count("SELECT COUNT(*) FROM payments WHERE paid_at IS NULL AND archived_at IS NULL")?;
 
         // Integrität der verschlüsselten Inhalte: erst mit dem aktuellen
         // Schlüssel, sonst mit dem im Backup geschützten Schlüssel.
-        let total_hidden = count("SELECT COUNT(*) FROM hidden_entries")?;
+        let total_hidden = count(
+            "SELECT
+                (SELECT COUNT(*) FROM hidden_entries) +
+                (SELECT COUNT(*) FROM hidden_entry_history)",
+        )?;
         let mut chosen: Option<(SecretKey, bool)> = None;
         if let Some(key) = current_key {
             if total_hidden == 0 || hidden::verify_all(&conn, key).is_ok() {
@@ -243,8 +253,18 @@ pub fn validate_backup_bytes(
                  Backup nicht nutzbar.",
             )
         })?;
+        hidden::backfill_archived_history(&conn, &master_key)
+            .map_err(|_| ApiError::backup("Verschlüsselte Historie im Backup ist beschädigt"))?;
+        hidden::verify_all(&conn, &master_key)
+            .map_err(|_| ApiError::backup("Verschlüsselte Historie im Backup ist beschädigt"))?;
         let hidden_count = count("SELECT COUNT(*) FROM hidden_entries WHERE archived_at IS NULL")?;
-        (master_key, key_changed, vehicle_count, payment_count, hidden_count)
+        (
+            master_key,
+            key_changed,
+            vehicle_count,
+            payment_count,
+            hidden_count,
+        )
     };
 
     // Die migrierte Kopie ist der Stand, der später eingespielt wird.
@@ -287,7 +307,9 @@ pub fn swap_database(
         let _ = std::fs::remove_file(&tmp_path);
         // Alte Datei ist unangetastet – Verbindung wieder öffnen (best effort).
         let _ = reopen(slot);
-        return Err(ApiError::backup("Wiederherstellung konnte nicht abgeschlossen werden"));
+        return Err(ApiError::backup(
+            "Wiederherstellung konnte nicht abgeschlossen werden",
+        ));
     }
 
     // WAL-Reste gehören zur alten Datei und dürfen die neue nicht beeinflussen.
@@ -320,7 +342,9 @@ pub fn write_safety_backup(
 ) -> Result<PathBuf, ApiError> {
     std::fs::create_dir_all(backups_dir).map_err(|_| io_error())?;
     let stamp = db::now(conn)?.replace(':', "-");
-    let path = backups_dir.join(format!("vor-wiederherstellung-{stamp}.{BACKUP_FILE_EXTENSION}"));
+    let path = backups_dir.join(format!(
+        "vor-wiederherstellung-{stamp}.{BACKUP_FILE_EXTENSION}"
+    ));
     let bytes = create_backup_bytes(conn, keys)?;
     std::fs::write(&path, bytes).map_err(|_| io_error())?;
     Ok(path)
@@ -465,8 +489,7 @@ mod tests {
         let source = open_db(&dir.path().join("quelle.db"));
         seed(&source, &keys);
         let backup = create_backup_bytes(&source, &keys).unwrap();
-        let validated =
-            validate_backup_bytes(&backup, None, Some(&keys.master_key), None).unwrap();
+        let validated = validate_backup_bytes(&backup, None, Some(&keys.master_key), None).unwrap();
 
         let db_path = dir.path().join("defekt.db");
         std::fs::write(&db_path, b"kein sqlite").unwrap();
@@ -481,7 +504,9 @@ mod tests {
         let conn = slot.expect("Verbindung nach dem Austausch");
         assert_eq!(db::list_vehicles(&conn).unwrap().len(), 1);
         assert_eq!(
-            hidden::list_entries(&conn, &validated.master_key).unwrap().len(),
+            hidden::list_entries(&conn, &validated.master_key)
+                .unwrap()
+                .len(),
             1
         );
     }
@@ -633,6 +658,59 @@ mod tests {
     }
 
     #[test]
+    fn backup_validierung_prueft_auch_secret_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let keys = test_keys();
+        let source = open_db(&dir.path().join("quelle-history.db"));
+        let entry = hidden::create_entry(
+            &source,
+            &keys.master_key,
+            NewHiddenEntry {
+                name: MARKER_NAME.to_string(),
+                amount_cents: 777,
+                note: MARKER_NOTE.to_string(),
+            },
+        )
+        .unwrap();
+        hidden::archive_entry(&source, &keys.master_key, &entry.id).unwrap();
+        let valid = create_backup_bytes(&source, &keys).unwrap();
+
+        let mut file: BackupFile = serde_json::from_slice(&valid).unwrap();
+        let staged = dir.path().join("history-manipuliert.db");
+        std::fs::write(&staged, BASE64.decode(file.db.as_bytes()).unwrap()).unwrap();
+        {
+            let conn = Connection::open(&staged).unwrap();
+            let (id, mut ciphertext): (String, Vec<u8>) = conn
+                .query_row(
+                    "SELECT id, encrypted_payload FROM hidden_entry_history LIMIT 1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            ciphertext[0] ^= 0x40;
+            conn.execute(
+                "UPDATE hidden_entry_history SET encrypted_payload = ?2 WHERE id = ?1",
+                rusqlite::params![id, ciphertext],
+            )
+            .unwrap();
+        }
+        let manipulated = std::fs::read(&staged).unwrap();
+        file.db_sha256 = sha256_hex(&manipulated);
+        file.db = BASE64.encode(&manipulated);
+        let tampered = serde_json::to_vec(&file).unwrap();
+        let err = validate_backup_bytes(
+            &tampered,
+            None,
+            Some(&keys.master_key),
+            Some(&keys.recovery_code),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Backup);
+        assert!(!format!("{err} {err:?}").contains(MARKER_NAME));
+        assert!(!format!("{err} {err:?}").contains(MARKER_NOTE));
+    }
+
+    #[test]
     fn neuere_schemaversion_wird_abgelehnt() {
         let dir = tempfile::tempdir().unwrap();
         let keys = test_keys();
@@ -658,8 +736,7 @@ mod tests {
         assert!(path.exists());
 
         let bytes = std::fs::read(&path).unwrap();
-        let validated =
-            validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
+        let validated = validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
         assert_eq!(validated.hidden_count, 1);
     }
 }

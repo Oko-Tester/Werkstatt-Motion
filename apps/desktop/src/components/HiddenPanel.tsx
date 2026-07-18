@@ -21,6 +21,8 @@ interface HiddenPanelProps {
   onCommitAmount: (id: string, raw: string) => void;
   onArchive: (id: string) => void;
   onDraftRowLeave: (draftId: string) => void;
+  secretUnlocked: boolean;
+  onOpenHistory: () => void;
   onClose: () => void;
 }
 
@@ -49,6 +51,8 @@ export function HiddenPanel({
   onCommitAmount,
   onArchive,
   onDraftRowLeave,
+  secretUnlocked,
+  onOpenHistory,
   onClose,
 }: HiddenPanelProps) {
   const locked = status !== null && !status.unlocked;
@@ -89,6 +93,11 @@ export function HiddenPanel({
         {!locked && (
           <button type="button" className="btn btn-secondary payments-add" onClick={onAdd}>
             + Eintrag
+          </button>
+        )}
+        {secretUnlocked && (
+          <button type="button" className="btn btn-secondary" onClick={onOpenHistory}>
+            Historie
           </button>
         )}
         <button
