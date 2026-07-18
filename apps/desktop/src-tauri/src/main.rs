@@ -106,6 +106,7 @@ fn main() {
             commands::update_vehicle_column_order,
             commands::update_vehicle_hidden_columns,
             commands::list_open_payments,
+            commands::list_paid_payments,
             commands::create_payment,
             commands::update_payment,
             commands::mark_payment_paid,

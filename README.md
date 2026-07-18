@@ -15,6 +15,7 @@ Keine verschachtelten Menüs, kein unnötiger Papierkram – einfach öffnen und
 - Arbeitsstand mit einem Klick markieren
 - TÜV und bestellte Teile im Blick behalten
 - Offene Zahlungen direkt sehen und als bezahlt markieren
+- Zusätzliche Kosten diskret in einem versteckten Bereich erfassen
 - Fahrzeuge schnell nach Kunde, Kennzeichen oder Modell finden
 - Erledigte Aufträge in der Historie nachschlagen
 - Daten auf einem USB-Stick oder an einem anderen Ort sichern
@@ -41,6 +42,15 @@ dringendste Auftrag immer ganz oben.
 
 Im Bereich **„Offene Zahlungen“** auf **„+ Offener Betrag“** klicken. Sobald
 bezahlt wurde, genügt ein Klick auf **„✓ Bezahlt“**.
+
+### Versteckte Kosten erfassen
+
+Das Werkstattlogo oben links drei Sekunden lang gedrückt halten. Daraufhin
+öffnet sich der Bereich **„Versteckte Einträge“**. Dort lassen sich über
+**„+ Eintrag“** eine Bezeichnung, ein Betrag und eine Notiz erfassen.
+
+Mit **„×“** wird der Bereich wieder geschlossen. Die Einträge sind damit in der
+normalen Ansicht nicht sichtbar. Das Verstecken ist jedoch kein Passwortschutz.
 
 ### Fahrzeug suchen
 

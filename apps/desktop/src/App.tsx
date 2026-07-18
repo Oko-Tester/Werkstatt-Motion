@@ -104,6 +104,7 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
   const [vehicleHistory, setVehicleHistory] = useState<VehicleHistory[]>([]);
+  const [paidPaymentHistory, setPaidPaymentHistory] = useState<Payment[]>([]);
   const [secretHistory, setSecretHistory] = useState<SecretHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -571,6 +572,9 @@ export default function App() {
   function addPayment() {
     const draft: PaymentDraft = {
       draftId: `draft-p-${crypto.randomUUID()}`,
+      vehicleId: null,
+      vehicleName: "",
+      licensePlate: "",
       customerName: "",
       amountCents: null,
       note: "",
@@ -594,6 +598,7 @@ export default function App() {
   async function createPaymentFromDraft(draft: PaymentDraft) {
     try {
       const created = await api.createPayment({
+        vehicleId: draft.vehicleId,
         customerName: draft.customerName,
         amountCents: draft.amountCents ?? 0,
         note: draft.note,
@@ -634,10 +639,37 @@ export default function App() {
 
   function commitPaymentText(id: string, field: PaymentTextField, value: string) {
     if (isDraftId(id)) {
-      updatePaymentDraft(id, { [field]: value });
+      updatePaymentDraft(
+        id,
+        field === "customerName"
+          ? {
+              customerName: value,
+              vehicleId: null,
+              vehicleName: "",
+              licensePlate: "",
+            }
+          : { [field]: value },
+      );
       return;
     }
     void savePaymentPatch(id, { [field]: value });
+  }
+
+  function selectPaymentVehicle(id: string, suggestion: CustomerSuggestion) {
+    const patch = {
+      vehicleId: suggestion.id,
+      customerName: suggestion.customerName,
+      vehicleName: suggestion.vehicleName ?? "",
+      licensePlate: suggestion.licensePlate ?? "",
+    };
+    if (isDraftId(id)) {
+      updatePaymentDraft(id, patch);
+      return;
+    }
+    void savePaymentPatch(id, {
+      vehicleId: suggestion.id,
+      customerName: suggestion.customerName,
+    });
   }
 
   function commitPaymentAmount(id: string, raw: string) {
@@ -702,6 +734,7 @@ export default function App() {
     setPayments((prev) => prev.filter((entry) => entry.id !== id));
     try {
       await api.markPaymentPaid(id);
+      setVehicles(await api.listVehicles());
       showUndo(`Zahlung von ${payment.customerName} als bezahlt markiert`, () => {
         setUndoState(null);
         void undoPaymentPaid(id);
@@ -715,7 +748,12 @@ export default function App() {
   async function undoPaymentPaid(id: string) {
     try {
       await api.restorePayment(id);
-      setPayments(await api.listOpenPayments());
+      const [paymentList, vehicleList] = await Promise.all([
+        api.listOpenPayments(),
+        api.listVehicles(),
+      ]);
+      setPayments(paymentList);
+      setVehicles(vehicleList);
     } catch (err) {
       showNotice(toApiError(err).message);
     }
@@ -778,6 +816,7 @@ export default function App() {
   function openHistoryWorkspace() {
     historyOpenRef.current = true;
     setVehicleHistory([]);
+    setPaidPaymentHistory([]);
     setSecretHistory([]);
     setHistoryOpen(true);
     setHistorySearch("");
@@ -789,9 +828,13 @@ export default function App() {
     setHistoryLoading(true);
     setHistoryError(null);
     try {
-      const vehiclesResult = await api.listCompletedVehicleHistory();
+      const [vehiclesResult, paymentsResult] = await Promise.all([
+        api.listCompletedVehicleHistory(),
+        api.listPaidPayments(),
+      ]);
       if (!historyOpenRef.current) return;
       setVehicleHistory(vehiclesResult);
+      setPaidPaymentHistory(paymentsResult);
 
       if (token !== null && secretSessionTokenRef.current === token) {
         try {
@@ -822,6 +865,7 @@ export default function App() {
     setHistoryOpen(false);
     setHistorySearch("");
     setVehicleHistory([]);
+    setPaidPaymentHistory([]);
     setSecretHistory([]);
     setHistoryError(null);
     setHistoryLoading(false);
@@ -1100,6 +1144,7 @@ export default function App() {
       {historyOpen ? (
         <HistoryWorkspace
           vehicleHistory={vehicleHistory}
+          paidPayments={paidPaymentHistory}
           secretHistory={secretHistory}
           search={historySearch}
           loading={historyLoading}
@@ -1147,6 +1192,7 @@ export default function App() {
               onHeightCommit={persistPaymentsPanelHeight}
               onAdd={addPayment}
               onCommitText={commitPaymentText}
+              onSelectVehicle={selectPaymentVehicle}
               onCommitAmount={commitPaymentAmount}
               onMarkPaid={markPaymentPaid}
               onDraftRowLeave={handlePaymentDraftRowLeave}
@@ -1156,6 +1202,7 @@ export default function App() {
                 status={hiddenStatus}
                 entries={hiddenEntries}
                 drafts={hiddenDrafts}
+                suggestions={customerSuggestions}
                 autoFocusId={autoFocusId}
                 fieldErrors={fieldErrors}
                 onAdd={addHiddenEntry}

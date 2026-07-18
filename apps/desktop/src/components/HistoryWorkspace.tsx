@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { formatCents } from "../money";
-import type { SecretHistoryEntry, VehicleHistory } from "../types";
+import type { Payment, SecretHistoryEntry, VehicleHistory } from "../types";
 
 interface HistoryWorkspaceProps {
   vehicleHistory: VehicleHistory[];
+  paidPayments: Payment[];
   secretHistory: SecretHistoryEntry[];
   search: string;
   loading: boolean;
@@ -37,6 +38,7 @@ function formatVehicleStatus(entry: VehicleHistory): string {
 /** Inline-Arbeitsansicht innerhalb der AppShell; bewusst weder Dialog noch Modal. */
 export function HistoryWorkspace({
   vehicleHistory,
+  paidPayments,
   secretHistory,
   search,
   loading,
@@ -63,6 +65,23 @@ export function HistoryWorkspace({
         includesQuery([entry.name, entry.note, String(entry.amountCents)], search),
       ),
     [search, secretHistory],
+  );
+  const visiblePayments = useMemo(
+    () =>
+      paidPayments.filter((entry) =>
+        includesQuery(
+          [
+            entry.customerName,
+            entry.vehicleName,
+            entry.licensePlate,
+            entry.note,
+            String(entry.amountCents),
+            entry.paidAt,
+          ],
+          search,
+        ),
+      ),
+    [paidPayments, search],
   );
 
   return (
@@ -106,7 +125,7 @@ export function HistoryWorkspace({
           </button>
         </div>
       ) : (
-        <div className={secretUnlocked ? "history-tables" : "history-tables is-public"}>
+        <div className={secretUnlocked ? "history-tables has-secret" : "history-tables"}>
           <section className="history-group" aria-labelledby="vehicle-history-title">
             <div className="history-group-heading">
               <h3 id="vehicle-history-title">Fahrzeug-Snapshots</h3>
@@ -139,6 +158,44 @@ export function HistoryWorkspace({
                         <td className="history-status-values">{formatVehicleStatus(entry)}</td>
                         <td>{formatDate(entry.completedAt)}</td>
                         <td>{formatDate(entry.archivedAt)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="history-group" aria-labelledby="payment-history-title">
+            <div className="history-group-heading">
+              <h3 id="payment-history-title">Bezahlte Kosten</h3>
+            </div>
+            <div className="history-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Kunde</th>
+                    <th>Fahrzeug</th>
+                    <th>Kennzeichen</th>
+                    <th>Betrag</th>
+                    <th>Notiz</th>
+                    <th>Bezahlt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiblePayments.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="history-empty">Keine bezahlten Kosten</td>
+                    </tr>
+                  ) : (
+                    visiblePayments.map((entry) => (
+                      <tr key={entry.id}>
+                        <td>{entry.customerName}</td>
+                        <td>{entry.vehicleName || "–"}</td>
+                        <td>{entry.licensePlate || "–"}</td>
+                        <td className="history-money">{formatCents(entry.amountCents)}</td>
+                        <td>{entry.note || "–"}</td>
+                        <td>{formatDate(entry.paidAt)}</td>
                       </tr>
                     ))
                   )}

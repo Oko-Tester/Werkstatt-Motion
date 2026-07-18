@@ -38,7 +38,7 @@ function getLogo(container: HTMLElement): Element {
 async function openSecret(container: HTMLElement) {
   fireEvent.pointerDown(getLogo(container), { button: 0 });
   act(() => vi.advanceTimersByTime(3000));
-  await screen.findByRole("region", { name: "Versteckte Einträge" });
+  await screen.findByRole("region", { name: "Weitere Zahlungen" });
   fireEvent.pointerUp(getLogo(container));
 }
 
@@ -55,7 +55,7 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     const storageSet = vi.spyOn(Storage.prototype, "setItem");
     const { backend, view } = await renderReady();
 
-    expect(screen.queryByRole("region", { name: "Versteckte Einträge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Weitere Zahlungen" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Historie" })).toBeInTheDocument();
     expect(backend.calls).not.toContain("begin_secret_session");
 
@@ -136,7 +136,7 @@ describe("Secret-Sitzung und Inline-Historie", () => {
 
     fireEvent.click(within(workspace).getByRole("button", { name: "← Zurück" }));
     expect(await screen.findByRole("region", { name: "Fahrzeuge" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Versteckte Einträge" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Weitere Zahlungen" })).toBeInTheDocument();
   });
 
   it("entfernt beim Sperren alle Secret-Daten, lässt aber die öffentliche Fahrzeughistorie offen", async () => {
@@ -148,7 +148,7 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     fireEvent.click(screen.getByRole("button", { name: "Geheimkonto archivieren" }));
     await waitFor(() => expect(backend.secretHistory).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "+ Eintrag" }));
-    const draft = screen.getByRole("textbox", { name: "Bezeichnung (Neuer Eintrag)" });
+    const draft = screen.getByRole("combobox", { name: "Bezeichnung (Neuer Eintrag)" });
     fireEvent.change(draft, { target: { value: "Hochsensibler Entwurf" } });
     fireEvent.click(screen.getByRole("button", { name: "Historie" }));
     const workspace = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
@@ -165,7 +165,7 @@ describe("Secret-Sitzung und Inline-Historie", () => {
 
     fireEvent.click(within(workspace).getByRole("button", { name: "← Zurück" }));
     expect(screen.getByRole("region", { name: "Fahrzeuge" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Versteckte Einträge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Weitere Zahlungen" })).not.toBeInTheDocument();
     expect(screen.queryByText("Hochsensibler Entwurf")).not.toBeInTheDocument();
   });
 
@@ -417,6 +417,7 @@ describe("Kunden-Autocomplete", () => {
     await user.click(option);
     expect(customer).toHaveValue("Müller, Anna");
     expect(String((customer as HTMLInputElement).value)).not.toContain("VW Golf");
+    expect(screen.getByText(/VW Golf.*M-AB 1/)).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "Betrag (Müller, Anna)" })).toHaveFocus(),
     );

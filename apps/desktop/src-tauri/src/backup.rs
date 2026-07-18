@@ -385,6 +385,7 @@ mod tests {
         db::create_payment(
             conn,
             NewPayment {
+                vehicle_id: None,
                 customer_name: "Lang".to_string(),
                 amount_cents: 12990,
                 note: String::new(),

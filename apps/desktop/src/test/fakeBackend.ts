@@ -30,6 +30,7 @@ export interface VehicleSeed {
 }
 
 export interface PaymentSeed {
+  vehicleId?: string;
   customerName: string;
   amountCents: number;
   note?: string;
@@ -191,9 +192,19 @@ export function installFakeBackend(seed?: {
 
   const payments: Payment[] = (seed?.payments ?? []).map((entry) => {
     const timestamp = nextTimestamp();
+    const vehicle =
+      vehicles.find((item) => item.id === entry.vehicleId) ??
+      vehicles.find(
+        (item) =>
+          item.customerName.trim().toLocaleLowerCase("de-DE") ===
+          entry.customerName.trim().toLocaleLowerCase("de-DE"),
+      );
     return {
       id: nextId("p"),
+      vehicleId: vehicle?.id ?? null,
       customerName: entry.customerName,
+      vehicleName: vehicle?.vehicleName ?? "",
+      licensePlate: vehicle?.licensePlate ?? "",
       amountCents: entry.amountCents,
       note: entry.note ?? "",
       createdAt: timestamp,
@@ -202,6 +213,10 @@ export function installFakeBackend(seed?: {
       archivedAt: null,
     };
   });
+  const paidVehicleEffects = new Map<
+    string,
+    { vehicleId: string; completedVehicle: boolean; createdHistory: boolean }
+  >();
 
   const hiddenEntries: HiddenEntry[] = (seed?.hidden ?? []).map((entry) => {
     const timestamp = nextTimestamp();
@@ -279,6 +294,13 @@ export function installFakeBackend(seed?: {
       .map((entry) => ({ ...entry }));
   }
 
+  function listPaidPayments(): Payment[] {
+    return payments
+      .filter((entry) => entry.paidAt !== null && entry.archivedAt === null)
+      .sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? ""))
+      .map((entry) => ({ ...entry }));
+  }
+
   function listHiddenEntries(): HiddenEntry[] {
     return hiddenEntries
       .filter((entry) => entry.archivedAt === null)
@@ -349,7 +371,7 @@ export function installFakeBackend(seed?: {
     ];
     const merged = new Map<string, CustomerSuggestion>();
     for (const candidate of candidates) {
-      const key = candidate.customerName.toLocaleLowerCase("de-DE");
+      const key = candidate.id;
       const current = merged.get(key);
       if (
         !current ||
@@ -574,16 +596,30 @@ export function installFakeBackend(seed?: {
       }
       case "list_open_payments":
         return listOpenPayments();
+      case "list_paid_payments":
+        return listPaidPayments();
       case "create_payment": {
         const input = args.input as Record<string, unknown>;
         const customerName = String(input.customerName ?? "").trim();
         const amountCents = Number(input.amountCents ?? 0);
         const note = String(input.note ?? "").trim();
         validatePaymentValues(customerName, amountCents);
+        const explicitVehicleId =
+          typeof input.vehicleId === "string" ? input.vehicleId : undefined;
+        const vehicle = explicitVehicleId
+          ? findVehicle(explicitVehicleId)
+          : vehicles.find(
+              (item) =>
+                item.customerName.trim().toLocaleLowerCase("de-DE") ===
+                customerName.toLocaleLowerCase("de-DE"),
+            );
         const timestamp = nextTimestamp();
         const payment: Payment = {
           id: nextId("p"),
+          vehicleId: vehicle?.id ?? null,
           customerName,
+          vehicleName: vehicle?.vehicleName ?? "",
+          licensePlate: vehicle?.licensePlate ?? "",
           amountCents,
           note,
           createdAt: timestamp,
@@ -601,16 +637,75 @@ export function installFakeBackend(seed?: {
         const amountCents = Number(patch.amountCents ?? payment.amountCents);
         const note = String(patch.note ?? payment.note).trim();
         validatePaymentValues(customerName, amountCents);
-        Object.assign(payment, { customerName, amountCents, note, updatedAt: nextTimestamp() });
+        const requestedVehicleId =
+          Object.prototype.hasOwnProperty.call(patch, "vehicleId")
+            ? (patch.vehicleId as string | null)
+            : undefined;
+        const vehicle =
+          requestedVehicleId === null
+            ? undefined
+            : requestedVehicleId
+              ? findVehicle(requestedVehicleId)
+              : patch.customerName !== undefined
+                ? vehicles.find(
+                    (item) =>
+                      item.customerName.trim().toLocaleLowerCase("de-DE") ===
+                      customerName.toLocaleLowerCase("de-DE"),
+                  )
+                : payment.vehicleId
+                  ? findVehicle(payment.vehicleId)
+                  : undefined;
+        Object.assign(payment, {
+          vehicleId: vehicle?.id ?? null,
+          customerName,
+          vehicleName: vehicle?.vehicleName ?? "",
+          licensePlate: vehicle?.licensePlate ?? "",
+          amountCents,
+          note,
+          updatedAt: nextTimestamp(),
+        });
         return { ...payment };
       }
       case "mark_payment_paid": {
         const payment = findPayment(String(args.id));
-        payment.paidAt = nextTimestamp();
+        const timestamp = nextTimestamp();
+        if (payment.paidAt === null && payment.vehicleId !== null) {
+          const vehicle = findVehicle(payment.vehicleId);
+          const completedVehicle = !vehicle.isDone;
+          const createdHistory = !vehicleHistory.some(
+            (item) => item.sourceVehicleId === vehicle.id,
+          );
+          if (completedVehicle) {
+            vehicle.isDone = true;
+            vehicle.updatedAt = timestamp;
+          }
+          ensureVehicleHistory(vehicle, timestamp);
+          paidVehicleEffects.set(payment.id, {
+            vehicleId: vehicle.id,
+            completedVehicle,
+            createdHistory,
+          });
+        }
+        payment.paidAt = timestamp;
         return { ...payment };
       }
       case "restore_payment": {
         const payment = findPayment(String(args.id));
+        const effect = paidVehicleEffects.get(payment.id);
+        if (effect) {
+          const vehicle = findVehicle(effect.vehicleId);
+          if (effect.createdHistory) {
+            const index = vehicleHistory.findIndex(
+              (item) => item.sourceVehicleId === effect.vehicleId,
+            );
+            if (index >= 0) vehicleHistory.splice(index, 1);
+          }
+          if (effect.completedVehicle) {
+            vehicle.isDone = false;
+            vehicle.updatedAt = nextTimestamp();
+          }
+          paidVehicleEffects.delete(payment.id);
+        }
         payment.paidAt = null;
         return { ...payment };
       }

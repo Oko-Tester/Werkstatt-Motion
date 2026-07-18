@@ -281,6 +281,12 @@ pub fn list_open_payments(state: State<'_, Db>) -> Result<Vec<Payment>, ApiError
 }
 
 #[tauri::command]
+pub fn list_paid_payments(state: State<'_, Db>) -> Result<Vec<Payment>, ApiError> {
+    let state = state.lock()?;
+    db::list_paid_payments(state.conn()?)
+}
+
+#[tauri::command]
 pub fn create_payment(state: State<'_, Db>, input: NewPayment) -> Result<Payment, ApiError> {
     let state = state.lock()?;
     db::create_payment(state.conn()?, input)

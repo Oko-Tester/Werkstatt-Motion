@@ -9,6 +9,7 @@ interface CustomerAutocompleteProps {
   label: string;
   suggestions: CustomerSuggestion[];
   onCommit: (value: string) => void;
+  onSelect?: (suggestion: CustomerSuggestion) => void;
   placeholder?: string;
   autoFocus?: boolean;
   error?: string;
@@ -71,6 +72,7 @@ export function CustomerAutocomplete({
   label,
   suggestions,
   onCommit,
+  onSelect,
   placeholder,
   autoFocus,
   error,
@@ -162,7 +164,14 @@ export function CustomerAutocomplete({
   }
 
   function choose(suggestion: CustomerSuggestion, input: HTMLInputElement) {
-    commit(suggestion.customerName);
+    if (onSelect) {
+      onSelect(suggestion);
+      setDraft(null);
+      setOpen(false);
+      setActiveIndex(-1);
+    } else {
+      commit(suggestion.customerName);
+    }
     window.setTimeout(() => focusNextField(input), 0);
   }
 

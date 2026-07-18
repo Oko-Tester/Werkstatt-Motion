@@ -34,12 +34,15 @@ export type VehiclePatch = Partial<
 >;
 
 export interface NewPaymentInput {
+  vehicleId?: string | null;
   customerName: string;
   amountCents: number;
   note?: string;
 }
 
-export type PaymentPatch = Partial<Pick<Payment, "customerName" | "amountCents" | "note">>;
+export type PaymentPatch = Partial<
+  Pick<Payment, "vehicleId" | "customerName" | "amountCents" | "note">
+>;
 
 export function listVehicles(): Promise<Vehicle[]> {
   return invoke("list_vehicles");
@@ -105,6 +108,10 @@ export function updateVehicleHiddenColumns(
 
 export function listOpenPayments(): Promise<Payment[]> {
   return invoke("list_open_payments");
+}
+
+export function listPaidPayments(): Promise<Payment[]> {
+  return invoke("list_paid_payments");
 }
 
 export function createPayment(input: NewPaymentInput): Promise<Payment> {

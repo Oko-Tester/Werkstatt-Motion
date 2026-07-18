@@ -120,7 +120,10 @@ impl VehicleStatusField {
 #[serde(rename_all = "camelCase")]
 pub struct Payment {
     pub id: String,
+    pub vehicle_id: Option<String>,
     pub customer_name: String,
+    pub vehicle_name: String,
+    pub license_plate: String,
     pub amount_cents: i64,
     pub note: String,
     pub created_at: String,
@@ -132,6 +135,7 @@ pub struct Payment {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewPayment {
+    pub vehicle_id: Option<String>,
     pub customer_name: String,
     pub amount_cents: i64,
     #[serde(default)]
@@ -141,6 +145,7 @@ pub struct NewPayment {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentPatch {
+    pub vehicle_id: Option<Option<String>>,
     pub customer_name: Option<String>,
     pub amount_cents: Option<i64>,
     pub note: Option<String>,

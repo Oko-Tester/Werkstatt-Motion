@@ -1,12 +1,14 @@
 import type { FocusEvent } from "react";
 import { formatCents } from "../money";
 import type {
+  CustomerSuggestion,
   FieldErrors,
   HiddenEntry,
   HiddenEntryDraft,
   HiddenStatus,
   HiddenTextField,
 } from "../types";
+import { CustomerAutocomplete } from "./CustomerAutocomplete";
 import { InlineMoneyField } from "./InlineMoneyField";
 import { InlineTextField } from "./InlineTextField";
 
@@ -14,6 +16,7 @@ interface HiddenPanelProps {
   status: HiddenStatus | null;
   entries: HiddenEntry[];
   drafts: HiddenEntryDraft[];
+  suggestions: CustomerSuggestion[];
   autoFocusId: string | null;
   fieldErrors: FieldErrors;
   onAdd: () => void;
@@ -42,6 +45,7 @@ export function HiddenPanel({
   status,
   entries,
   drafts,
+  suggestions,
   autoFocusId,
   fieldErrors,
   onAdd,
@@ -78,9 +82,9 @@ export function HiddenPanel({
   }
 
   return (
-    <section className="payments-panel hidden-panel" aria-label="Versteckte Einträge">
+    <section className="payments-panel hidden-panel" aria-label="Weitere Zahlungen">
       <div className="payments-header">
-        <h2 className="payments-title">Versteckte Einträge</h2>
+        <h2 className="payments-title">Weitere Zahlungen</h2>
         {!locked && (
           <span className="payments-total">
             {entries.length === 0 ? "" : `Summe: ${formatCents(totalCents)}`}
@@ -129,9 +133,10 @@ export function HiddenPanel({
                 className="payment-row"
                 onBlur={(event) => handleRowBlur(event, row)}
               >
-                <InlineTextField
+                <CustomerAutocomplete
                   value={row.name}
                   label={`Bezeichnung (${rowName})`}
+                  suggestions={suggestions}
                   placeholder="Bezeichnung"
                   autoFocus={row.id === autoFocusId}
                   error={fieldErrors[row.id]?.name}

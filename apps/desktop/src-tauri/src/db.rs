@@ -114,6 +114,33 @@ const MIGRATIONS: &[&str] = &[
     // Version 8: Frei bearbeitbare Notiz je Fahrzeug und im unveränderlichen Snapshot.
     "ALTER TABLE vehicles ADD COLUMN note TEXT NOT NULL DEFAULT '';
      ALTER TABLE vehicle_history ADD COLUMN note TEXT NOT NULL DEFAULT '';",
+    // Version 9: Stabile Zuordnung und Fahrzeug-Snapshot für Kosten.
+    "ALTER TABLE payments ADD COLUMN vehicle_id TEXT REFERENCES vehicles(id);
+     ALTER TABLE payments ADD COLUMN vehicle_name TEXT NOT NULL DEFAULT '';
+     ALTER TABLE payments ADD COLUMN license_plate TEXT NOT NULL DEFAULT '';
+     UPDATE payments
+        SET vehicle_id = (
+                SELECT v.id FROM vehicles v
+                 WHERE lower(trim(v.customer_name)) = lower(trim(payments.customer_name))
+                 ORDER BY v.updated_at DESC, v.id ASC LIMIT 1
+            ),
+            vehicle_name = COALESCE((
+                SELECT v.vehicle_name FROM vehicles v
+                 WHERE lower(trim(v.customer_name)) = lower(trim(payments.customer_name))
+                 ORDER BY v.updated_at DESC, v.id ASC LIMIT 1
+            ), ''),
+            license_plate = COALESCE((
+                SELECT v.license_plate FROM vehicles v
+                 WHERE lower(trim(v.customer_name)) = lower(trim(payments.customer_name))
+                 ORDER BY v.updated_at DESC, v.id ASC LIMIT 1
+            ), '');
+     CREATE INDEX idx_payments_vehicle ON payments (vehicle_id, paid_at);",
+    // Version 10: Merkt sich, ob "Bezahlt" den Fahrzeugabschluss und dessen
+    // Snapshot erzeugt hat, damit Rückgängig exakt beide Änderungen zurücknimmt.
+    "ALTER TABLE payments
+        ADD COLUMN completed_vehicle_on_paid INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE payments
+        ADD COLUMN vehicle_history_created_on_paid INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// Öffnet (oder erzeugt) die Datenbankdatei, setzt die Pragmas und führt die
@@ -228,7 +255,10 @@ fn vehicle_from_row(row: &Row<'_>) -> rusqlite::Result<Vehicle> {
 fn payment_from_row(row: &Row<'_>) -> rusqlite::Result<Payment> {
     Ok(Payment {
         id: row.get("id")?,
+        vehicle_id: row.get("vehicle_id")?,
         customer_name: row.get("customer_name")?,
+        vehicle_name: row.get("vehicle_name")?,
+        license_plate: row.get("license_plate")?,
         amount_cents: row.get("amount_cents")?,
         note: row.get("note")?,
         created_at: row.get("created_at")?,
@@ -521,8 +551,8 @@ pub fn restore_vehicle(conn: &Connection, id: &str) -> Result<Vehicle, ApiError>
 
 // ---------- Kundenvorschläge ----------
 
-/// Führt identische Kundennamen (ohne Beachtung der Groß-/Kleinschreibung)
-/// zusammen und behält den Kontext der zuletzt verwendeten Fahrzeugzeile.
+/// Führt aktive Zeile und Historie desselben Fahrzeugs zusammen. Mehrere
+/// Fahrzeuge desselben Kunden bleiben für eine eindeutige Kostenzuordnung erhalten.
 pub fn list_customer_suggestions(conn: &Connection) -> Result<Vec<CustomerSuggestion>, ApiError> {
     let mut stmt = conn.prepare(
         "SELECT id, customer_name, vehicle_name, license_plate,
@@ -553,7 +583,9 @@ pub fn list_customer_suggestions(conn: &Connection) -> Result<Vec<CustomerSugges
 
     let mut merged = std::collections::HashMap::<String, CustomerSuggestion>::new();
     for candidate in candidates {
-        let key = candidate.customer_name.to_lowercase();
+        // Aktive Zeile und Historie desselben Fahrzeugs zusammenführen.
+        // Verschiedene Fahrzeuge desselben Kunden bleiben auswählbar.
+        let key = candidate.id.clone();
         let replace = merged
             .get(&key)
             .map(|current| {
@@ -780,17 +812,66 @@ pub fn list_open_payments(conn: &Connection) -> Result<Vec<Payment>, ApiError> {
     Ok(payments)
 }
 
+/// Bezahlte Kosten für die öffentliche Historie, jüngste zuerst.
+pub fn list_paid_payments(conn: &Connection) -> Result<Vec<Payment>, ApiError> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM payments WHERE paid_at IS NOT NULL AND archived_at IS NULL
+         ORDER BY paid_at DESC, id ASC",
+    )?;
+    let payments = stmt
+        .query_map([], payment_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(payments)
+}
+
+fn resolve_payment_vehicle(
+    conn: &Connection,
+    vehicle_id: Option<&str>,
+    customer_name: &str,
+) -> Result<Option<Vehicle>, ApiError> {
+    if let Some(id) = vehicle_id {
+        return get_vehicle(conn, id).map(Some);
+    }
+    Ok(conn
+        .query_row(
+            "SELECT * FROM vehicles
+             WHERE lower(trim(customer_name)) = lower(trim(?1))
+             ORDER BY updated_at DESC, id ASC LIMIT 1",
+            [customer_name],
+            vehicle_from_row,
+        )
+        .optional()?)
+}
+
 pub fn create_payment(conn: &Connection, input: NewPayment) -> Result<Payment, ApiError> {
     let customer_name = input.customer_name.trim().to_string();
     let note = input.note.trim().to_string();
     validate_payment_values(&customer_name, input.amount_cents)?;
 
+    let vehicle = resolve_payment_vehicle(conn, input.vehicle_id.as_deref(), &customer_name)?;
     let id = Uuid::new_v4().to_string();
     let timestamp = now(conn)?;
     conn.execute(
-        "INSERT INTO payments (id, customer_name, amount_cents, note, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-        params![id, customer_name, input.amount_cents, note, timestamp],
+        "INSERT INTO payments (
+            id, vehicle_id, customer_name, vehicle_name, license_plate,
+            amount_cents, note, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        params![
+            id,
+            vehicle.as_ref().map(|item| item.id.as_str()),
+            customer_name,
+            vehicle
+                .as_ref()
+                .map(|item| item.vehicle_name.as_str())
+                .unwrap_or(""),
+            vehicle
+                .as_ref()
+                .map(|item| item.license_plate.as_str())
+                .unwrap_or(""),
+            input.amount_cents,
+            note,
+            timestamp
+        ],
     )?;
     get_payment(conn, &id)
 }
@@ -801,49 +882,125 @@ pub fn update_payment(
     patch: PaymentPatch,
 ) -> Result<Payment, ApiError> {
     let current = get_payment(conn, id)?;
+    let customer_changed = patch.customer_name.is_some();
     let customer_name = patch
         .customer_name
         .map(|value| value.trim().to_string())
-        .unwrap_or(current.customer_name);
+        .unwrap_or_else(|| current.customer_name.clone());
     let amount_cents = patch.amount_cents.unwrap_or(current.amount_cents);
     let note = patch
         .note
         .map(|value| value.trim().to_string())
-        .unwrap_or(current.note);
+        .unwrap_or_else(|| current.note.clone());
     validate_payment_values(&customer_name, amount_cents)?;
+    let vehicle = match patch.vehicle_id {
+        Some(vehicle_id) => resolve_payment_vehicle(conn, vehicle_id.as_deref(), &customer_name)?,
+        None if customer_changed => resolve_payment_vehicle(conn, None, &customer_name)?,
+        None => current
+            .vehicle_id
+            .as_deref()
+            .map(|vehicle_id| get_vehicle(conn, vehicle_id))
+            .transpose()?,
+    };
 
     let timestamp = now(conn)?;
     conn.execute(
         "UPDATE payments
-         SET customer_name = ?2, amount_cents = ?3, note = ?4, updated_at = ?5
+         SET vehicle_id = ?2, customer_name = ?3, vehicle_name = ?4,
+             license_plate = ?5, amount_cents = ?6, note = ?7, updated_at = ?8
          WHERE id = ?1",
-        params![id, customer_name, amount_cents, note, timestamp],
+        params![
+            id,
+            vehicle.as_ref().map(|item| item.id.as_str()),
+            customer_name,
+            vehicle
+                .as_ref()
+                .map(|item| item.vehicle_name.as_str())
+                .unwrap_or(""),
+            vehicle
+                .as_ref()
+                .map(|item| item.license_plate.as_str())
+                .unwrap_or(""),
+            amount_cents,
+            note,
+            timestamp
+        ],
     )?;
     get_payment(conn, id)
 }
 
 pub fn mark_payment_paid(conn: &Connection, id: &str) -> Result<Payment, ApiError> {
-    let timestamp = now(conn)?;
-    let changed = conn.execute(
-        "UPDATE payments SET paid_at = ?2, updated_at = ?2 WHERE id = ?1",
-        params![id, timestamp],
-    )?;
-    if changed == 0 {
-        return Err(ApiError::not_found("Zahlung nicht gefunden"));
+    let tx = conn.unchecked_transaction()?;
+    let payment = get_payment(&tx, id)?;
+    if payment.paid_at.is_some() {
+        tx.commit()?;
+        return get_payment(conn, id);
     }
+    let timestamp = now(&tx)?;
+    let mut completed_vehicle = false;
+    let mut created_history = false;
+
+    if let Some(vehicle_id) = payment.vehicle_id.as_deref() {
+        let vehicle = get_vehicle(&tx, vehicle_id)?;
+        let history_existed = get_vehicle_history_by_source(&tx, vehicle_id)?.is_some();
+        if !vehicle.is_done {
+            tx.execute(
+                "UPDATE vehicles SET is_done = 1, updated_at = ?2 WHERE id = ?1",
+                params![vehicle_id, timestamp],
+            )?;
+            completed_vehicle = true;
+        }
+        insert_vehicle_history_snapshot(&tx, vehicle_id, &timestamp)?;
+        created_history = !history_existed;
+    }
+
+    tx.execute(
+        "UPDATE payments
+         SET paid_at = ?2, updated_at = ?2,
+             completed_vehicle_on_paid = ?3,
+             vehicle_history_created_on_paid = ?4
+         WHERE id = ?1",
+        params![id, timestamp, completed_vehicle, created_history],
+    )?;
+    tx.commit()?;
     get_payment(conn, id)
 }
 
 /// Macht „Bezahlt“ rückgängig – die Zahlung ist danach wieder offen.
 pub fn restore_payment(conn: &Connection, id: &str) -> Result<Payment, ApiError> {
-    let timestamp = now(conn)?;
-    let changed = conn.execute(
-        "UPDATE payments SET paid_at = NULL, updated_at = ?2 WHERE id = ?1",
+    let tx = conn.unchecked_transaction()?;
+    let payment = get_payment(&tx, id)?;
+    let (completed_vehicle, created_history): (bool, bool) = tx.query_row(
+        "SELECT completed_vehicle_on_paid, vehicle_history_created_on_paid
+           FROM payments WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let timestamp = now(&tx)?;
+
+    if let Some(vehicle_id) = payment.vehicle_id.as_deref() {
+        if created_history {
+            tx.execute(
+                "DELETE FROM vehicle_history WHERE source_vehicle_id = ?1",
+                [vehicle_id],
+            )?;
+        }
+        if completed_vehicle {
+            tx.execute(
+                "UPDATE vehicles SET is_done = 0, updated_at = ?2 WHERE id = ?1",
+                params![vehicle_id, timestamp],
+            )?;
+        }
+    }
+    tx.execute(
+        "UPDATE payments
+         SET paid_at = NULL, updated_at = ?2,
+             completed_vehicle_on_paid = 0,
+             vehicle_history_created_on_paid = 0
+         WHERE id = ?1",
         params![id, timestamp],
     )?;
-    if changed == 0 {
-        return Err(ApiError::not_found("Zahlung nicht gefunden"));
-    }
+    tx.commit()?;
     get_payment(conn, id)
 }
 
@@ -1311,6 +1468,7 @@ mod tests {
         create_payment(
             &conn,
             NewPayment {
+                vehicle_id: None,
                 customer_name: "Nur Zahlung".to_string(),
                 amount_cents: 100,
                 note: String::new(),
@@ -1358,6 +1516,7 @@ mod tests {
         let payment = create_payment(
             &conn,
             NewPayment {
+                vehicle_id: None,
                 customer_name: "Schneider".to_string(),
                 amount_cents: 48650,
                 note: " Bremsen ".to_string(),
@@ -1380,6 +1539,7 @@ mod tests {
         let err = create_payment(
             &conn,
             NewPayment {
+                vehicle_id: None,
                 customer_name: "Schneider".to_string(),
                 amount_cents: 0,
                 note: String::new(),
@@ -1392,6 +1552,7 @@ mod tests {
         let err = create_payment(
             &conn,
             NewPayment {
+                vehicle_id: None,
                 customer_name: "  ".to_string(),
                 amount_cents: 100,
                 note: String::new(),
@@ -1407,6 +1568,7 @@ mod tests {
         let payment = create_payment(
             &conn,
             NewPayment {
+                vehicle_id: None,
                 customer_name: "Lang".to_string(),
                 amount_cents: 12990,
                 note: String::new(),
@@ -1531,24 +1693,36 @@ mod tests {
     #[test]
     fn zahlung_bezahlt_und_rueckgaengig() {
         let conn = test_conn();
+        let vehicle =
+            create_vehicle(&conn, vehicle_input("Öztürk", "Mercedes Vito", "M-OE 7")).unwrap();
         let payment = create_payment(
             &conn,
             NewPayment {
+                vehicle_id: Some(vehicle.id.clone()),
                 customer_name: "Öztürk".to_string(),
                 amount_cents: 124000,
                 note: String::new(),
             },
         )
         .unwrap();
+        assert_eq!(payment.vehicle_id.as_deref(), Some(vehicle.id.as_str()));
+        assert_eq!(payment.vehicle_name, "Mercedes Vito");
+        assert_eq!(payment.license_plate, "M-OE 7");
         assert_eq!(list_open_payments(&conn).unwrap().len(), 1);
 
         let paid = mark_payment_paid(&conn, &payment.id).unwrap();
         assert!(paid.paid_at.is_some());
         assert!(list_open_payments(&conn).unwrap().is_empty());
+        assert_eq!(list_paid_payments(&conn).unwrap(), vec![paid]);
+        assert!(get_vehicle(&conn, &vehicle.id).unwrap().is_done);
+        assert_eq!(list_completed_vehicle_history(&conn).unwrap().len(), 1);
 
         let restored = restore_payment(&conn, &payment.id).unwrap();
         assert!(restored.paid_at.is_none());
         assert_eq!(list_open_payments(&conn).unwrap().len(), 1);
+        assert!(list_paid_payments(&conn).unwrap().is_empty());
+        assert!(!get_vehicle(&conn, &vehicle.id).unwrap().is_done);
+        assert!(list_completed_vehicle_history(&conn).unwrap().is_empty());
 
         let err = mark_payment_paid(&conn, "fehlt").unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);

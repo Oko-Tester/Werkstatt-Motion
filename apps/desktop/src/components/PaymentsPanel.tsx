@@ -25,6 +25,7 @@ interface PaymentsPanelProps {
   onHeightCommit: (height: number) => void;
   onAdd: () => void;
   onCommitText: (id: string, field: PaymentTextField, value: string) => void;
+  onSelectVehicle: (id: string, suggestion: CustomerSuggestion) => void;
   onCommitAmount: (id: string, raw: string) => void;
   onMarkPaid: (id: string) => void;
   onDraftRowLeave: (draftId: string) => void;
@@ -36,7 +37,10 @@ const RESIZE_KEYBOARD_STEP = 40;
 
 interface PaymentRowData {
   id: string;
+  vehicleId: string | null;
   customerName: string;
+  vehicleName: string;
+  licensePlate: string;
   amountCents: number | null;
   note: string;
   isDraft: boolean;
@@ -55,6 +59,7 @@ export function PaymentsPanel({
   onHeightCommit,
   onAdd,
   onCommitText,
+  onSelectVehicle,
   onCommitAmount,
   onMarkPaid,
   onDraftRowLeave,
@@ -126,14 +131,20 @@ export function PaymentsPanel({
   const rows: PaymentRowData[] = [
     ...drafts.map((draft) => ({
       id: draft.draftId,
+      vehicleId: draft.vehicleId,
       customerName: draft.customerName,
+      vehicleName: draft.vehicleName,
+      licensePlate: draft.licensePlate,
       amountCents: draft.amountCents,
       note: draft.note,
       isDraft: true,
     })),
     ...payments.map((payment) => ({
       id: payment.id,
+      vehicleId: payment.vehicleId,
       customerName: payment.customerName,
+      vehicleName: payment.vehicleName,
+      licensePlate: payment.licensePlate,
       amountCents: payment.amountCents as number | null,
       note: payment.note,
       isDraft: false,
@@ -212,15 +223,24 @@ export function PaymentsPanel({
                 className="payment-row"
                 onBlur={(event) => handleRowBlur(event, row)}
               >
-                <CustomerAutocomplete
-                  value={row.customerName}
-                  label={`Kunde (${rowName})`}
-                  suggestions={suggestions}
-                  placeholder="Kunde"
-                  autoFocus={row.id === autoFocusId}
-                  error={fieldErrors[row.id]?.customerName}
-                  onCommit={(value) => onCommitText(row.id, "customerName", value)}
-                />
+                <div className="payment-customer-cell">
+                  <CustomerAutocomplete
+                    value={row.customerName}
+                    label={`Kunde (${rowName})`}
+                    suggestions={suggestions}
+                    placeholder="Kunde"
+                    autoFocus={row.id === autoFocusId}
+                    error={fieldErrors[row.id]?.customerName}
+                    onCommit={(value) => onCommitText(row.id, "customerName", value)}
+                    onSelect={(suggestion) => onSelectVehicle(row.id, suggestion)}
+                  />
+                  <span className="payment-vehicle-link">
+                    {row.vehicleId
+                      ? [row.vehicleName, row.licensePlate].filter(Boolean).join(" · ") ||
+                        "Fahrzeug verknüpft"
+                      : "Kein Fahrzeug verknüpft"}
+                  </span>
+                </div>
                 <InlineMoneyField
                   cents={row.amountCents}
                   label={`Betrag (${rowName})`}

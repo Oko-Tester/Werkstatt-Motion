@@ -426,8 +426,28 @@ describe("App: Offene Zahlungen", () => {
     expect(screen.queryByDisplayValue(/486,50/)).not.toBeInTheDocument();
     await waitFor(() => expect(backend.payments[0].paidAt).not.toBeNull());
 
+    await user.click(screen.getByRole("button", { name: "Historie" }));
+    const history = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
+    const vehicleSnapshots = within(history).getByRole("heading", {
+      name: "Fahrzeug-Snapshots",
+    }).closest("section");
+    expect(vehicleSnapshots).not.toBeNull();
+    expect(within(vehicleSnapshots as HTMLElement).getByText("Audi A4")).toBeInTheDocument();
+    const costs = within(history).getByRole("heading", { name: "Bezahlte Kosten" })
+      .closest("section");
+    expect(costs).not.toBeNull();
+    expect(within(costs as HTMLElement).getByText("Audi A4")).toBeInTheDocument();
+    expect(within(costs as HTMLElement).getByText("EBE-TS 77")).toBeInTheDocument();
+    expect(within(costs as HTMLElement).getByText(/486,50/)).toBeInTheDocument();
+
+    await user.click(within(history).getByRole("button", { name: /Zur/ }));
+
     await user.click(await screen.findByRole("button", { name: "Rückgängig" }));
     expect(await screen.findByDisplayValue(/486,50/)).toBeInTheDocument();
     expect(backend.payments[0].paidAt).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Historie" }));
+    expect(await screen.findByText("Keine bezahlten Kosten")).toBeInTheDocument();
+    expect(await screen.findByText("Keine Fahrzeug-Snapshots")).toBeInTheDocument();
   });
 });

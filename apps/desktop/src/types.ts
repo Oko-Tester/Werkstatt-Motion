@@ -18,7 +18,10 @@ export interface Vehicle {
 /** Offene Zahlung. Beträge grundsätzlich als Integer in Cent. */
 export interface Payment {
   id: string;
+  vehicleId: string | null;
   customerName: string;
+  vehicleName: string;
+  licensePlate: string;
   amountCents: number;
   note: string;
   createdAt: string;
@@ -161,6 +164,9 @@ export interface VehicleDraft {
 /** Neue, noch nicht gespeicherte Zahlungszeile. */
 export interface PaymentDraft {
   draftId: string;
+  vehicleId: string | null;
+  vehicleName: string;
+  licensePlate: string;
   customerName: string;
   amountCents: number | null;
   note: string;

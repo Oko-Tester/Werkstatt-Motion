@@ -6,7 +6,7 @@ import App from "./App";
 import { installFakeBackend } from "./test/fakeBackend";
 import type { FakeBackend } from "./test/fakeBackend";
 
-const HIDDEN_REGION = { name: "Versteckte Einträge" };
+const HIDDEN_REGION = { name: "Weitere Zahlungen" };
 
 function seedData() {
   return {
@@ -162,7 +162,9 @@ describe("Versteckter Bereich: Einträge", () => {
     await screen.findByDisplayValue("Kasse B");
 
     fireEvent.click(screen.getByRole("button", { name: "+ Eintrag" }));
-    const nameField = screen.getByRole("textbox", { name: "Bezeichnung (Neuer Eintrag)" });
+    const nameField = screen.getByRole("combobox", {
+      name: "Bezeichnung (Neuer Eintrag)",
+    });
     expect(nameField).toHaveFocus();
 
     fireEvent.change(nameField, { target: { value: "Nebenkasse" } });
@@ -182,6 +184,22 @@ describe("Versteckter Bereich: Einträge", () => {
     const created = backend.hiddenEntries.find((entry) => entry.name === "Nebenkasse");
     expect(created?.amountCents).toBe(123456);
     expect(await screen.findByDisplayValue(/1\.234,56/)).toBeInTheDocument();
+  });
+
+  it("übernimmt Kundennamen über dasselbe Autofill wie offene Zahlungen", async () => {
+    const { container } = await renderApp();
+    await openHiddenArea(container);
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Eintrag" }));
+    const nameField = screen.getByRole("combobox", {
+      name: "Bezeichnung (Neuer Eintrag)",
+    });
+    fireEvent.change(nameField, { target: { value: "Mül" } });
+
+    const suggestion = await screen.findByRole("option", { name: /Müller, Anna/ });
+    fireEvent.mouseDown(suggestion);
+
+    expect(nameField).toHaveValue("Müller, Anna");
   });
 
   it("bearbeitet den Betrag direkt und speichert automatisch", async () => {
