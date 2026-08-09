@@ -56,6 +56,13 @@ export function updateVehicle(id: string, patch: VehiclePatch): Promise<Vehicle>
   return invoke("update_vehicle", { id, patch });
 }
 
+export function updateVehicleAppointment(
+  id: string,
+  appointmentAt: string | null,
+): Promise<Vehicle> {
+  return invoke("update_vehicle_appointment", { id, appointmentAt });
+}
+
 export function updateVehicleStatus(
   id: string,
   field: VehicleStatusField,

@@ -13,6 +13,7 @@ pub struct Vehicle {
     pub parts_ordered: bool,
     pub parts_arrived: bool,
     pub is_done: bool,
+    pub appointment_at: Option<String>,
     pub position: i64,
     pub created_at: String,
     pub updated_at: String,

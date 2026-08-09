@@ -5,6 +5,7 @@ import type {
   VehicleStatusField,
   VehicleTextField,
 } from "../types";
+import { AppointmentField } from "./AppointmentField";
 import { InlineTextField } from "./InlineTextField";
 import { StatusToggle } from "./StatusToggle";
 
@@ -18,6 +19,7 @@ export interface VehicleRowData {
   partsOrdered: boolean;
   partsArrived: boolean;
   isDone: boolean;
+  appointmentAt: string | null;
 }
 
 interface VehicleRowProps {
@@ -29,6 +31,7 @@ interface VehicleRowProps {
   isDropTarget: boolean;
   errors?: Record<string, string>;
   onCommitText: (id: string, field: VehicleTextField, value: string) => void;
+  onAppointmentChange: (id: string, appointmentAt: string | null) => void;
   onToggleStatus: (id: string, field: VehicleStatusField, value: boolean) => void;
   onArchive: (id: string) => void;
   onRowLeave?: (id: string) => void;
@@ -49,6 +52,7 @@ export function VehicleRow({
   isDropTarget,
   errors,
   onCommitText,
+  onAppointmentChange,
   onToggleStatus,
   onArchive,
   onRowLeave,
@@ -95,6 +99,15 @@ export function VehicleRow({
 
   function renderColumn(columnId: VehicleColumnId): ReactNode {
     switch (columnId) {
+      case "appointmentAt":
+        return (
+          <AppointmentField
+            appointmentAt={vehicle.appointmentAt}
+            customerName={vehicle.customerName}
+            disabled={isDraft}
+            onChange={(appointmentAt) => onAppointmentChange(vehicle.id, appointmentAt)}
+          />
+        );
       case "customerName":
         return (
           <InlineTextField
@@ -133,6 +146,7 @@ export function VehicleRow({
             label={`Notiz (${rowName})`}
             placeholder="Notiz hinzufügen"
             previewOnHover
+            editInPreview={!isDraft}
             error={errors?.note}
             onCommit={(value) => onCommitText(vehicle.id, "note", value)}
           />
@@ -223,7 +237,16 @@ export function VehicleRow({
         <td
           key={columnId}
           data-column-id={columnId}
-          className={columnId === "customerName" || columnId === "vehicleName" || columnId === "licensePlate" || columnId === "note" ? undefined : "cell-center"}
+          className={
+            columnId === "appointmentAt"
+              ? "cell-appointment"
+              : columnId === "customerName" ||
+                  columnId === "vehicleName" ||
+                  columnId === "licensePlate" ||
+                  columnId === "note"
+                ? undefined
+                : "cell-center"
+          }
         >
           {renderColumn(columnId)}
         </td>

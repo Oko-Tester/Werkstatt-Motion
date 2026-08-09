@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api";
 import { toApiError } from "./api";
 import { AppShell } from "./components/AppShell";
+import { CalendarWorkspace } from "./components/CalendarWorkspace";
 import { Header } from "./components/Header";
 import { HiddenPanel } from "./components/HiddenPanel";
 import { HistoryWorkspace } from "./components/HistoryWorkspace";
@@ -103,6 +104,7 @@ export default function App() {
   const [hiddenStatus, setHiddenStatus] = useState<HiddenStatus | null>(null);
   const [hiddenEntries, setHiddenEntries] = useState<HiddenEntry[]>([]);
   const [hiddenDrafts, setHiddenDrafts] = useState<HiddenEntryDraft[]>([]);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
   const [vehicleHistory, setVehicleHistory] = useState<VehicleHistory[]>([]);
@@ -148,6 +150,7 @@ export default function App() {
   const secretOpeningRef = useRef(false);
   const orderSnapshotRef = useRef<Vehicle[] | null>(null);
   const reorderTimerRef = useRef<number | null>(null);
+  const appointmentSaveVersionRef = useRef<Map<string, number>>(new Map());
   const searchRef = useRef<HTMLInputElement>(null);
 
   // ---------- Laden, Hinweise, Undo ----------
@@ -467,6 +470,36 @@ export default function App() {
     void saveVehicleStatus(id, field, value);
   }
 
+  function changeVehicleAppointment(id: string, appointmentAt: string | null) {
+    const previous = vehiclesRef.current.find((vehicle) => vehicle.id === id);
+    if (previous === undefined || previous.appointmentAt === appointmentAt) return;
+    const saveVersion = (appointmentSaveVersionRef.current.get(id) ?? 0) + 1;
+    appointmentSaveVersionRef.current.set(id, saveVersion);
+
+    setVehicles((current) =>
+      current.map((vehicle) =>
+        vehicle.id === id ? { ...vehicle, appointmentAt } : vehicle,
+      ),
+    );
+    void api
+      .updateVehicleAppointment(id, appointmentAt)
+      .then((saved) => {
+        if (appointmentSaveVersionRef.current.get(id) !== saveVersion) return;
+        appointmentSaveVersionRef.current.delete(id);
+        setVehicles((current) =>
+          current.map((vehicle) => (vehicle.id === id ? saved : vehicle)),
+        );
+      })
+      .catch((err) => {
+        if (appointmentSaveVersionRef.current.get(id) !== saveVersion) return;
+        appointmentSaveVersionRef.current.delete(id);
+        setVehicles((current) =>
+          current.map((vehicle) => (vehicle.id === id ? previous : vehicle)),
+        );
+        showNotice(toApiError(err).message);
+      });
+  }
+
   async function saveVehicleStatus(id: string, field: VehicleStatusField, value: boolean) {
     const previous = vehiclesRef.current.find((entry) => entry.id === id);
     if (!previous) {
@@ -736,7 +769,6 @@ export default function App() {
     setPayments((prev) => prev.filter((entry) => entry.id !== id));
     try {
       await api.markPaymentPaid(id);
-      setVehicles(await api.listVehicles());
       showUndo(`Zahlung von ${payment.customerName} als bezahlt markiert`, () => {
         setUndoState(null);
         void undoPaymentPaid(id);
@@ -750,12 +782,7 @@ export default function App() {
   async function undoPaymentPaid(id: string) {
     try {
       await api.restorePayment(id);
-      const [paymentList, vehicleList] = await Promise.all([
-        api.listOpenPayments(),
-        api.listVehicles(),
-      ]);
-      setPayments(paymentList);
-      setVehicles(vehicleList);
+      setPayments(await api.listOpenPayments());
     } catch (err) {
       showNotice(toApiError(err).message);
     }
@@ -816,6 +843,7 @@ export default function App() {
   }
 
   function openHistoryWorkspace() {
+    setCalendarOpen(false);
     historyOpenRef.current = true;
     setVehicleHistory([]);
     setPaidPaymentHistory([]);
@@ -871,6 +899,15 @@ export default function App() {
     setSecretHistory([]);
     setHistoryError(null);
     setHistoryLoading(false);
+  }
+
+  function openCalendarWorkspace() {
+    if (historyOpenRef.current) closeHistoryWorkspace();
+    setCalendarOpen(true);
+  }
+
+  function closeCalendarWorkspace() {
+    setCalendarOpen(false);
   }
 
   function closeHiddenArea() {
@@ -1151,6 +1188,8 @@ export default function App() {
           search={search}
           onSearchChange={setSearch}
           onAddVehicle={addVehicle}
+          activeWorkspace={calendarOpen ? "calendar" : historyOpen ? "history" : "vehicles"}
+          onOpenCalendar={openCalendarWorkspace}
           onOpenHistory={openHistoryWorkspace}
           onOpenHiddenArea={openHiddenArea}
           onBackup={handleBackup}
@@ -1164,7 +1203,9 @@ export default function App() {
         />
       }
     >
-      {historyOpen ? (
+      {calendarOpen ? (
+        <CalendarWorkspace vehicles={vehicles} onBack={closeCalendarWorkspace} />
+      ) : historyOpen ? (
         <HistoryWorkspace
           vehicleHistory={vehicleHistory}
           paidPayments={paidPaymentHistory}
@@ -1193,6 +1234,7 @@ export default function App() {
               autoFocusId={autoFocusId}
               fieldErrors={fieldErrors}
               onCommitText={commitVehicleText}
+              onAppointmentChange={changeVehicleAppointment}
               onToggleStatus={toggleVehicleStatus}
               onArchive={archiveVehicle}
               onDraftRowLeave={handleVehicleDraftRowLeave}

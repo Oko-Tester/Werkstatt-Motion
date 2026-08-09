@@ -95,6 +95,7 @@ fn main() {
             commands::list_vehicles,
             commands::create_vehicle,
             commands::update_vehicle,
+            commands::update_vehicle_appointment,
             commands::update_vehicle_status,
             commands::reorder_vehicles,
             commands::archive_vehicle,

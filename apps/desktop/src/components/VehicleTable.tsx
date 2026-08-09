@@ -28,6 +28,7 @@ interface VehicleTableProps {
   autoFocusId: string | null;
   fieldErrors: FieldErrors;
   onCommitText: (id: string, field: VehicleTextField, value: string) => void;
+  onAppointmentChange: (id: string, appointmentAt: string | null) => void;
   onToggleStatus: (id: string, field: VehicleStatusField, value: boolean) => void;
   onArchive: (id: string) => void;
   onDraftRowLeave: (draftId: string) => void;
@@ -40,6 +41,7 @@ const COLUMN_META: Record<
   VehicleColumnId,
   { label: string; align: "left" | "center"; widthClass?: string }
 > = {
+  appointmentAt: { label: "Termin", align: "left", widthClass: "col-appointment" },
   customerName: { label: "Kunde", align: "left" },
   vehicleName: { label: "Fahrzeug", align: "left" },
   licensePlate: { label: "Kennzeichen", align: "left", widthClass: "col-kennzeichen" },
@@ -64,6 +66,7 @@ export function VehicleTable({
   autoFocusId,
   fieldErrors,
   onCommitText,
+  onAppointmentChange,
   onToggleStatus,
   onArchive,
   onDraftRowLeave,
@@ -182,6 +185,7 @@ export function VehicleTable({
     partsOrdered: draft.partsOrdered,
     partsArrived: draft.partsArrived,
     isDone: draft.isDone,
+    appointmentAt: null,
   }));
   const isEmpty = !loading && loadError === null && draftRows.length === 0 && vehicles.length === 0;
 
@@ -284,6 +288,7 @@ export function VehicleTable({
               isDropTarget={vehicle.id === dropTargetId && dragId !== null && dragId !== vehicle.id}
               errors={fieldErrors[vehicle.id]}
               onCommitText={onCommitText}
+              onAppointmentChange={onAppointmentChange}
               onToggleStatus={onToggleStatus}
               onArchive={onArchive}
               onDragStart={() => setDragId(vehicle.id)}
@@ -310,6 +315,7 @@ export function VehicleTable({
               isDropTarget={false}
               errors={fieldErrors[draft.id]}
               onCommitText={onCommitText}
+              onAppointmentChange={onAppointmentChange}
               onToggleStatus={onToggleStatus}
               onArchive={onArchive}
               onRowLeave={onDraftRowLeave}

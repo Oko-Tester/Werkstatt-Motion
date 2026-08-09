@@ -56,10 +56,14 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     const { backend, view } = await renderReady();
 
     expect(screen.queryByRole("region", { name: "Weitere Zahlungen" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Historie" })).toBeInTheDocument();
+    const historyButton = screen.getByRole("button", { name: "Historie" });
+    expect(historyButton.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(historyButton).toHaveAttribute("aria-pressed", "false");
     expect(backend.calls).not.toContain("begin_secret_session");
 
-    fireEvent.click(screen.getByRole("button", { name: "Historie" }));
+    fireEvent.click(historyButton);
+    expect(historyButton).toHaveAttribute("aria-pressed", "true");
+    expect(historyButton).toHaveClass("is-active");
     const publicWorkspace = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
     expect(within(publicWorkspace).getByText("Müller, Anna")).toBeInTheDocument();
     expect(within(publicWorkspace).queryByText("Entschlüsselte Secret-History")).not.toBeInTheDocument();
@@ -67,6 +71,8 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     expect(backend.calls).toContain("list_completed_vehicle_history");
     expect(backend.calls).not.toContain("list_hidden_entry_history");
     fireEvent.click(within(publicWorkspace).getByRole("button", { name: "← Zurück" }));
+    expect(historyButton).toHaveAttribute("aria-pressed", "false");
+    expect(historyButton).not.toHaveClass("is-active");
 
     await openSecret(view.container);
     expect(await screen.findByDisplayValue("Geheimkonto")).toBeInTheDocument();
@@ -249,7 +255,13 @@ describe("Zahlungsbereich und persistente UI-Präferenzen", () => {
       key: "ArrowRight",
       altKey: true,
     });
-    await waitFor(() => expect(backend.preferences.vehicleColumnOrder[0]).toBe("vehicleName"));
+    await waitFor(() =>
+      expect(backend.preferences.vehicleColumnOrder.slice(0, 3)).toEqual([
+        "appointmentAt",
+        "vehicleName",
+        "customerName",
+      ]),
+    );
     await user.click(screen.getByRole("button", { name: "Weitere Aktionen" }));
     await user.click(screen.getByRole("menuitem", { name: "Backup" }));
     await screen.findByText("Backup erstellt");
@@ -270,7 +282,7 @@ describe("Zahlungsbereich und persistente UI-Präferenzen", () => {
       .getAllByRole("columnheader")
       .map((header) => header.getAttribute("data-column-id"))
       .filter(Boolean);
-    expect(headers.slice(0, 2)).toEqual(["vehicleName", "customerName"]);
+    expect(headers.slice(0, 3)).toEqual(["appointmentAt", "vehicleName", "customerName"]);
   });
 });
 
@@ -323,11 +335,17 @@ describe("Fahrzeugspalten", () => {
       .getAllByRole("columnheader")
       .map((header) => header.getAttribute("data-column-id"))
       .filter(Boolean);
-    expect(headers.slice(0, 3)).toEqual(["licensePlate", "customerName", "vehicleName"]);
+    expect(headers.slice(0, 4)).toEqual([
+      "appointmentAt",
+      "licensePlate",
+      "customerName",
+      "vehicleName",
+    ]);
     const firstDataRow = screen.getAllByRole("row")[1];
     const dataCells = within(firstDataRow).getAllByRole("cell");
-    expect(within(dataCells[1]).getByDisplayValue("M-AB 1")).toBeInTheDocument();
-    expect(within(dataCells[2]).getByDisplayValue("Müller, Anna")).toBeInTheDocument();
+    // Prioritätsgriff und die aus Altpräferenzen vorne ergänzte Terminspalte.
+    expect(within(dataCells[2]).getByDisplayValue("M-AB 1")).toBeInTheDocument();
+    expect(within(dataCells[3]).getByDisplayValue("Müller, Anna")).toBeInTheDocument();
   });
 
   it("verschiebt per HTML5-DnD, zeigt aktive/drop Position, persistiert sofort und löst kein Zeilen-DnD aus", async () => {
@@ -348,14 +366,15 @@ describe("Fahrzeugspalten", () => {
     fireEvent.drop(vehicle, { dataTransfer, clientX: 1 });
 
     await waitFor(() => expect(backend.calls).toContain("update_vehicle_column_order"));
-    expect(backend.preferences.vehicleColumnOrder.slice(0, 2)).toEqual([
+    expect(backend.preferences.vehicleColumnOrder.slice(0, 3)).toEqual([
+      "appointmentAt",
       "vehicleName",
       "customerName",
     ]);
     expect(backend.calls).not.toContain("reorder_vehicles");
     const firstRow = screen.getAllByRole("row")[1];
     const cells = within(firstRow).getAllByRole("cell");
-    expect(within(cells[1]).getByDisplayValue("VW Golf")).toBeInTheDocument();
+    expect(within(cells[2]).getByDisplayValue("VW Golf")).toBeInTheDocument();
     expect(within(firstRow).getByRole("button", { name: "Fertig (M-AB 1)" })).toBeInTheDocument();
   });
 
@@ -365,10 +384,57 @@ describe("Fahrzeugspalten", () => {
     handle.focus();
     fireEvent.keyDown(handle, { key: "ArrowRight", altKey: true });
 
-    await waitFor(() => expect(backend.preferences.vehicleColumnOrder[0]).toBe("vehicleName"));
+    await waitFor(() =>
+      expect(backend.preferences.vehicleColumnOrder.slice(0, 3)).toEqual([
+        "appointmentAt",
+        "vehicleName",
+        "customerName",
+      ]),
+    );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Kunde, Spalte verschieben" })).toHaveFocus(),
     );
+  });
+
+  it("verschiebt und persistiert auch die Terminspalte", async () => {
+    const { backend, view } = await renderReady();
+    const appointment = screen.getByRole("columnheader", {
+      name: /Termin, Spalte verschieben/,
+    });
+    const customer = screen.getByRole("columnheader", { name: /Kunde, Spalte verschieben/ });
+    const dataTransfer = {
+      effectAllowed: "none",
+      dropEffect: "none",
+      setData: vi.fn(),
+      getData: vi.fn(),
+    };
+
+    fireEvent.dragStart(appointment, { dataTransfer });
+    expect(appointment).toHaveClass("is-column-dragging");
+    fireEvent.dragOver(customer, { dataTransfer, clientX: 1 });
+    fireEvent.drop(customer, { dataTransfer, clientX: 1 });
+
+    await waitFor(() =>
+      expect(backend.preferences.vehicleColumnOrder.slice(0, 2)).toEqual([
+        "customerName",
+        "appointmentAt",
+      ]),
+    );
+    const firstRow = screen.getAllByRole("row")[1];
+    const cells = within(firstRow).getAllByRole("cell");
+    expect(within(cells[1]).getByDisplayValue("Müller, Anna")).toBeInTheDocument();
+    expect(
+      within(cells[2]).getByRole("button", { name: "Termin für Müller, Anna" }),
+    ).toBeInTheDocument();
+
+    view.unmount();
+    render(<App />);
+    await screen.findByDisplayValue("Müller, Anna");
+    const headers = screen
+      .getAllByRole("columnheader")
+      .map((header) => header.getAttribute("data-column-id"))
+      .filter(Boolean);
+    expect(headers.slice(0, 2)).toEqual(["customerName", "appointmentAt"]);
   });
 });
 

@@ -175,6 +175,16 @@ pub fn update_vehicle(
 }
 
 #[tauri::command]
+pub fn update_vehicle_appointment(
+    state: State<'_, Db>,
+    id: String,
+    appointment_at: Option<String>,
+) -> Result<Vehicle, ApiError> {
+    let state = state.lock()?;
+    db::update_vehicle_appointment(state.conn()?, &id, appointment_at)
+}
+
+#[tauri::command]
 pub fn update_vehicle_status(
     state: State<'_, Db>,
     id: String,

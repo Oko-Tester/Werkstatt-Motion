@@ -12,6 +12,7 @@ Keine verschachtelten Menüs, kein unnötiger Papierkram – einfach öffnen und
 ## Das Wichtigste im Überblick
 
 - Fahrzeuge und Kunden übersichtlich verwalten
+- Werkstatttermine direkt am Fahrzeug planen und im Kalender überblicken
 - Arbeitsstand mit einem Klick markieren
 - TÜV und bestellte Teile im Blick behalten
 - Offene Zahlungen direkt sehen und als bezahlt markieren
@@ -34,10 +35,31 @@ eintragen. Die Angaben werden automatisch gespeichert.
 Bei **„TÜV nötig“**, **„Teile bestellen“**, **„Teile angekommen“** oder
 **„Fertig“** einfach auf das passende Feld klicken.
 
+### Notizen bearbeiten
+
+Beim Darüberfahren zeigt eine gefüllte Notiz weiterhin ihre vollständige
+Vorschau. Ein Klick öffnet diese Fläche als großen mehrzeiligen Editor. Beim
+Verlassen wird automatisch gespeichert; **Strg+Enter** speichert direkt und
+**Esc** verwirft die aktuelle Änderung.
+
 ### Reihenfolge festlegen
 
 Wichtige Fahrzeuge lassen sich am Griff links nach oben ziehen. So steht der
-dringendste Auftrag immer ganz oben.
+dringendste Auftrag immer ganz oben. Auch die Tabellenspalten – einschließlich
+**„Termin“** – lassen sich am Spaltenkopf verschieben; ihre Reihenfolge wird
+automatisch gespeichert.
+
+### Fahrzeugtermin planen
+
+In der Spalte **„Termin“** auf **„Termin hinzufügen“** beziehungsweise den
+vorhandenen Termin klicken. Datum und optional eine Uhrzeit auswählen und
+speichern; der Wochentag wird automatisch ermittelt. Die Uhrzeit kann leer
+bleiben. Mit **„Termin entfernen“** lässt sich die Planung wieder löschen.
+
+Über den gut sichtbaren Button **„Kalender“** öffnet sich die Monatsübersicht.
+Dort erscheinen dieselben Fahrzeugtermine mit Uhrzeit beziehungsweise dem
+Hinweis **„Ohne Uhrzeit“**, Kunde, Fahrzeug und Kennzeichen. Änderungen aus der
+Fahrzeugliste sind unmittelbar auch im Kalender sichtbar.
 
 ### Offene Zahlung eintragen
 

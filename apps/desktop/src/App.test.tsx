@@ -150,8 +150,22 @@ describe("App: Inline-Bearbeitung", () => {
     fireEvent.mouseLeave(noteField);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
+    await user.click(noteField);
+    const noteDialog = screen.getByRole("dialog", { name: "Notiz bearbeiten" });
+    const noteEditor = within(noteDialog).getByRole("textbox", {
+      name: "Notiz (M-AB 1234) groß bearbeiten",
+    });
+    expect(noteEditor).toHaveFocus();
+    await user.type(noteEditor, "{Enter}Ersatzteil bestellt");
     const search = screen.getByRole("searchbox", { name: "Fahrzeuge durchsuchen" });
-    await user.type(search, "Rückruf");
+    await user.click(search);
+    await waitFor(() =>
+      expect(backend.vehicles[0].note).toBe(
+        "Kunde wartet auf Rückruf\nErsatzteil bestellt",
+      ),
+    );
+
+    await user.type(search, "Ersatzteil");
     expect(screen.getByDisplayValue("Müller, Anna")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Yilmaz, Emre")).not.toBeInTheDocument();
   });
@@ -431,12 +445,15 @@ describe("App: Offene Zahlungen", () => {
   it("markiert Zahlungen mit einem Klick als bezahlt und erlaubt Rückgängig", async () => {
     const user = userEvent.setup();
     await renderApp();
+    const doneToggle = screen.getByRole("button", { name: "Fertig (EBE-TS 77)" });
+    expect(doneToggle).toHaveAttribute("aria-pressed", "false");
     await user.click(
       screen.getByRole("button", { name: "Zahlung von Schneider, Thomas als bezahlt markieren" }),
     );
 
     expect(screen.queryByDisplayValue(/486,50/)).not.toBeInTheDocument();
     await waitFor(() => expect(backend.payments[0].paidAt).not.toBeNull());
+    expect(doneToggle).toHaveAttribute("aria-pressed", "false");
 
     await user.click(screen.getByRole("button", { name: "Historie" }));
     const history = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
@@ -444,7 +461,9 @@ describe("App: Offene Zahlungen", () => {
       name: "Fahrzeug-Snapshots",
     }).closest("section");
     expect(vehicleSnapshots).not.toBeNull();
-    expect(within(vehicleSnapshots as HTMLElement).getByText("Audi A4")).toBeInTheDocument();
+    expect(
+      within(vehicleSnapshots as HTMLElement).getByText("Keine Fahrzeug-Snapshots"),
+    ).toBeInTheDocument();
     const costs = within(history).getByRole("heading", { name: "Bezahlte Kosten" })
       .closest("section");
     expect(costs).not.toBeNull();
@@ -457,6 +476,10 @@ describe("App: Offene Zahlungen", () => {
     await user.click(await screen.findByRole("button", { name: "Rückgängig" }));
     expect(await screen.findByDisplayValue(/486,50/)).toBeInTheDocument();
     expect(backend.payments[0].paidAt).toBeNull();
+    expect(screen.getByRole("button", { name: "Fertig (EBE-TS 77)" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
 
     await user.click(screen.getByRole("button", { name: "Historie" }));
     expect(await screen.findByText("Keine bezahlten Kosten")).toBeInTheDocument();

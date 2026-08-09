@@ -9,6 +9,8 @@ export interface Vehicle {
   partsOrdered: boolean;
   partsArrived: boolean;
   isDone: boolean;
+  /** Lokaler Werkstatttermin im Format YYYY-MM-DD, optional ergänzt um THH:mm. */
+  appointmentAt: string | null;
   position: number;
   createdAt: string;
   updatedAt: string;
@@ -38,6 +40,7 @@ export type VehicleTextField = "customerName" | "vehicleName" | "licensePlate" |
 
 /** Stabile fachliche IDs der verschiebbaren Fahrzeugspalten. */
 export const VEHICLE_COLUMN_IDS = [
+  "appointmentAt",
   "customerName",
   "vehicleName",
   "licensePlate",

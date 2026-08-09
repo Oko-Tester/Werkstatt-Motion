@@ -23,6 +23,7 @@ export interface VehicleSeed {
   vehicleName?: string;
   licensePlate?: string;
   note?: string;
+  appointmentAt?: string | null;
   tuvRequired?: boolean;
   partsOrdered?: boolean;
   partsArrived?: boolean;
@@ -89,6 +90,57 @@ function validateVehicleText(customerName: string, vehicleName: string, licenseP
   }
 }
 
+function validateAppointmentAt(input: unknown): asserts input is string | null {
+  if (input === null) return;
+  if (typeof input !== "string") {
+    throw validationError(
+      "appointmentAt",
+      "Termin muss das Format YYYY-MM-DD oder YYYY-MM-DDTHH:mm haben",
+    );
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(input);
+  if (match === null) {
+    throw validationError(
+      "appointmentAt",
+      "Termin muss das Format YYYY-MM-DD oder YYYY-MM-DDTHH:mm haben",
+    );
+  }
+  const [, yearText, monthText, dayText, hourText, minuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = hourText === undefined ? null : Number(hourText);
+  const minute = minuteText === undefined ? null : Number(minuteText);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    0,
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ][month] ?? 0;
+  if (
+    year === 0 ||
+    day === 0 ||
+    day > daysInMonth ||
+    (hour !== null && hour > 23) ||
+    (minute !== null && minute > 59)
+  ) {
+    throw validationError(
+      "appointmentAt",
+      "Termin enthält kein gültiges Datum oder keine gültige Uhrzeit",
+    );
+  }
+}
+
 function validatePaymentValues(customerName: string, amountCents: number) {
   if (customerName.trim() === "") {
     throw validationError("customerName", "Kunde darf nicht leer sein");
@@ -118,7 +170,10 @@ function normalizeColumnOrder(input: readonly string[]): VehicleColumnId[] {
   }
   if (normalized.length === 0) return [...VEHICLE_COLUMN_IDS];
   for (const id of VEHICLE_COLUMN_IDS) {
-    if (!known.has(id)) normalized.push(id);
+    if (!known.has(id)) {
+      if (id === "appointmentAt") normalized.unshift(id);
+      else normalized.push(id);
+    }
   }
   return normalized;
 }
@@ -157,6 +212,7 @@ export function installFakeBackend(seed?: {
       vehicleName: entry.vehicleName ?? "",
       licensePlate: entry.licensePlate ?? "",
       note: entry.note ?? "",
+      appointmentAt: entry.appointmentAt ?? null,
       tuvRequired: entry.tuvRequired ?? false,
       partsOrdered: entry.partsOrdered ?? false,
       partsArrived: entry.partsArrived ?? false,
@@ -213,11 +269,6 @@ export function installFakeBackend(seed?: {
       archivedAt: null,
     };
   });
-  const paidVehicleEffects = new Map<
-    string,
-    { vehicleId: string; completedVehicle: boolean; createdHistory: boolean }
-  >();
-
   const hiddenEntries: HiddenEntry[] = (seed?.hidden ?? []).map((entry) => {
     const timestamp = nextTimestamp();
     return {
@@ -460,6 +511,7 @@ export function installFakeBackend(seed?: {
           vehicleName,
           licensePlate,
           note,
+          appointmentAt: null,
           tuvRequired: Boolean(input.tuvRequired),
           partsOrdered: Boolean(input.partsOrdered),
           partsArrived: Boolean(input.partsArrived),
@@ -503,6 +555,14 @@ export function installFakeBackend(seed?: {
         vehicle[field] = Boolean(args.value);
         vehicle.updatedAt = nextTimestamp();
         if (field === "isDone" && vehicle.isDone) ensureVehicleHistory(vehicle, vehicle.updatedAt);
+        return { ...vehicle };
+      }
+      case "update_vehicle_appointment": {
+        const vehicle = findVehicle(String(args.id));
+        const appointmentAt = args.appointmentAt;
+        validateAppointmentAt(appointmentAt);
+        vehicle.appointmentAt = appointmentAt;
+        vehicle.updatedAt = nextTimestamp();
         return { ...vehicle };
       }
       case "create_vehicle_history_snapshot": {
@@ -672,44 +732,11 @@ export function installFakeBackend(seed?: {
       }
       case "mark_payment_paid": {
         const payment = findPayment(String(args.id));
-        const timestamp = nextTimestamp();
-        if (payment.paidAt === null && payment.vehicleId !== null) {
-          const vehicle = findVehicle(payment.vehicleId);
-          const completedVehicle = !vehicle.isDone;
-          const createdHistory = !vehicleHistory.some(
-            (item) => item.sourceVehicleId === vehicle.id,
-          );
-          if (completedVehicle) {
-            vehicle.isDone = true;
-            vehicle.updatedAt = timestamp;
-          }
-          ensureVehicleHistory(vehicle, timestamp);
-          paidVehicleEffects.set(payment.id, {
-            vehicleId: vehicle.id,
-            completedVehicle,
-            createdHistory,
-          });
-        }
-        payment.paidAt = timestamp;
+        payment.paidAt = nextTimestamp();
         return { ...payment };
       }
       case "restore_payment": {
         const payment = findPayment(String(args.id));
-        const effect = paidVehicleEffects.get(payment.id);
-        if (effect) {
-          const vehicle = findVehicle(effect.vehicleId);
-          if (effect.createdHistory) {
-            const index = vehicleHistory.findIndex(
-              (item) => item.sourceVehicleId === effect.vehicleId,
-            );
-            if (index >= 0) vehicleHistory.splice(index, 1);
-          }
-          if (effect.completedVehicle) {
-            vehicle.isDone = false;
-            vehicle.updatedAt = nextTimestamp();
-          }
-          paidVehicleEffects.delete(payment.id);
-        }
         payment.paidAt = null;
         return { ...payment };
       }

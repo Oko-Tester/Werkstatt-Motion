@@ -141,6 +141,9 @@ const MIGRATIONS: &[&str] = &[
         ADD COLUMN completed_vehicle_on_paid INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE payments
         ADD COLUMN vehicle_history_created_on_paid INTEGER NOT NULL DEFAULT 0;",
+    // Version 11: Optionaler, lokaler Werkstatttermin. Die Uhrzeit darf fehlen;
+    // gültig sind YYYY-MM-DD und YYYY-MM-DDTHH:mm.
+    "ALTER TABLE vehicles ADD COLUMN appointment_at TEXT;",
 ];
 
 /// Öffnet (oder erzeugt) die Datenbankdatei, setzt die Pragmas und führt die
@@ -234,6 +237,66 @@ fn validate_payment_values(customer_name: &str, amount_cents: i64) -> Result<(),
     Ok(())
 }
 
+/// Prüft den lokalen Termin als `YYYY-MM-DD`, optional ergänzt um `THH:mm`.
+/// Neben der Form werden echte Kalendertage einschließlich Schaltjahren geprüft.
+fn validate_appointment_at(appointment_at: &str) -> Result<(), ApiError> {
+    let bytes = appointment_at.as_bytes();
+    let has_time = bytes.len() == 16;
+    let has_expected_separators = (bytes.len() == 10 || has_time)
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && (!has_time || (bytes[10] == b'T' && bytes[13] == b':'));
+    let date_digit_positions = [0, 1, 2, 3, 5, 6, 8, 9];
+    let time_digit_positions = [11, 12, 14, 15];
+    if !has_expected_separators
+        || !date_digit_positions
+            .iter()
+            .all(|&index| bytes[index].is_ascii_digit())
+        || (has_time
+            && !time_digit_positions
+                .iter()
+                .all(|&index| bytes[index].is_ascii_digit()))
+    {
+        return Err(ApiError::validation(
+            "appointmentAt",
+            "Termin muss das Format YYYY-MM-DD oder YYYY-MM-DDTHH:mm haben",
+        ));
+    }
+
+    let parse_digits = |start: usize, end: usize| -> u32 {
+        bytes[start..end]
+            .iter()
+            .fold(0, |value, digit| value * 10 + u32::from(*digit - b'0'))
+    };
+    let year = parse_digits(0, 4);
+    let month = parse_digits(5, 7);
+    let day = parse_digits(8, 10);
+    let hour = has_time.then(|| parse_digits(11, 13));
+    let minute = has_time.then(|| parse_digits(14, 16));
+
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap_year => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if year == 0
+        || day == 0
+        || day > days_in_month
+        || hour.is_some_and(|value| value > 23)
+        || minute.is_some_and(|value| value > 59)
+    {
+        return Err(ApiError::validation(
+            "appointmentAt",
+            "Termin enthält kein gültiges Datum oder keine gültige Uhrzeit",
+        ));
+    }
+
+    Ok(())
+}
+
 fn vehicle_from_row(row: &Row<'_>) -> rusqlite::Result<Vehicle> {
     Ok(Vehicle {
         id: row.get("id")?,
@@ -245,6 +308,7 @@ fn vehicle_from_row(row: &Row<'_>) -> rusqlite::Result<Vehicle> {
         parts_ordered: row.get("parts_ordered")?,
         parts_arrived: row.get("parts_arrived")?,
         is_done: row.get("is_done")?,
+        appointment_at: row.get("appointment_at")?,
         position: row.get("position")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
@@ -385,8 +449,36 @@ pub fn update_vehicle(
         "UPDATE vehicles
          SET customer_name = ?2, vehicle_name = ?3, license_plate = ?4, note = ?5, updated_at = ?6
          WHERE id = ?1",
-        params![id, customer_name, vehicle_name, license_plate, note, timestamp],
+        params![
+            id,
+            customer_name,
+            vehicle_name,
+            license_plate,
+            note,
+            timestamp
+        ],
     )?;
+    get_vehicle(conn, id)
+}
+
+/// Setzt, ändert oder entfernt den optionalen Werkstatttermin eines Fahrzeugs.
+pub fn update_vehicle_appointment(
+    conn: &Connection,
+    id: &str,
+    appointment_at: Option<String>,
+) -> Result<Vehicle, ApiError> {
+    if let Some(value) = appointment_at.as_deref() {
+        validate_appointment_at(value)?;
+    }
+
+    let timestamp = now(conn)?;
+    let changed = conn.execute(
+        "UPDATE vehicles SET appointment_at = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, appointment_at, timestamp],
+    )?;
+    if changed == 0 {
+        return Err(ApiError::not_found("Fahrzeug nicht gefunden"));
+    }
     get_vehicle(conn, id)
 }
 
@@ -626,7 +718,8 @@ pub fn list_customer_suggestions(conn: &Connection) -> Result<Vec<CustomerSugges
 
 // ---------- UI-Präferenzen ----------
 
-pub const VEHICLE_COLUMN_ORDER_DEFAULT: [&str; 8] = [
+pub const VEHICLE_COLUMN_ORDER_DEFAULT: [&str; 9] = [
+    "appointmentAt",
     "customerName",
     "vehicleName",
     "licensePlate",
@@ -660,7 +753,14 @@ pub fn normalize_vehicle_column_order(column_order: &[String]) -> Vec<String> {
     }
     for id in VEHICLE_COLUMN_ORDER_DEFAULT {
         if !normalized.iter().any(|current| current == id) {
-            normalized.push(id.to_string());
+            // Bis Version 11 war der Termin eine feste Spalte links neben der
+            // gespeicherten Reihenfolge. Alte Präferenzen behalten genau diese
+            // sichtbare Position, während neue Anordnungen frei bleiben.
+            if id == "appointmentAt" {
+                normalized.insert(0, id.to_string());
+            } else {
+                normalized.push(id.to_string());
+            }
         }
     }
     normalized
@@ -954,30 +1054,13 @@ pub fn mark_payment_paid(conn: &Connection, id: &str) -> Result<Payment, ApiErro
         return get_payment(conn, id);
     }
     let timestamp = now(&tx)?;
-    let mut completed_vehicle = false;
-    let mut created_history = false;
-
-    if let Some(vehicle_id) = payment.vehicle_id.as_deref() {
-        let vehicle = get_vehicle(&tx, vehicle_id)?;
-        let history_existed = get_vehicle_history_by_source(&tx, vehicle_id)?.is_some();
-        if !vehicle.is_done {
-            tx.execute(
-                "UPDATE vehicles SET is_done = 1, updated_at = ?2 WHERE id = ?1",
-                params![vehicle_id, timestamp],
-            )?;
-            completed_vehicle = true;
-        }
-        insert_vehicle_history_snapshot(&tx, vehicle_id, &timestamp)?;
-        created_history = !history_existed;
-    }
-
     tx.execute(
         "UPDATE payments
          SET paid_at = ?2, updated_at = ?2,
-             completed_vehicle_on_paid = ?3,
-             vehicle_history_created_on_paid = ?4
+             completed_vehicle_on_paid = 0,
+             vehicle_history_created_on_paid = 0
          WHERE id = ?1",
-        params![id, timestamp, completed_vehicle, created_history],
+        params![id, timestamp],
     )?;
     tx.commit()?;
     get_payment(conn, id)
@@ -986,29 +1069,8 @@ pub fn mark_payment_paid(conn: &Connection, id: &str) -> Result<Payment, ApiErro
 /// Macht „Bezahlt“ rückgängig – die Zahlung ist danach wieder offen.
 pub fn restore_payment(conn: &Connection, id: &str) -> Result<Payment, ApiError> {
     let tx = conn.unchecked_transaction()?;
-    let payment = get_payment(&tx, id)?;
-    let (completed_vehicle, created_history): (bool, bool) = tx.query_row(
-        "SELECT completed_vehicle_on_paid, vehicle_history_created_on_paid
-           FROM payments WHERE id = ?1",
-        [id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    get_payment(&tx, id)?;
     let timestamp = now(&tx)?;
-
-    if let Some(vehicle_id) = payment.vehicle_id.as_deref() {
-        if created_history {
-            tx.execute(
-                "DELETE FROM vehicle_history WHERE source_vehicle_id = ?1",
-                [vehicle_id],
-            )?;
-        }
-        if completed_vehicle {
-            tx.execute(
-                "UPDATE vehicles SET is_done = 0, updated_at = ?2 WHERE id = ?1",
-                params![vehicle_id, timestamp],
-            )?;
-        }
-    }
     tx.execute(
         "UPDATE payments
          SET paid_at = NULL, updated_at = ?2,
@@ -1064,6 +1126,43 @@ mod tests {
         assert!(tables.contains(&"vehicle_history".to_string()));
         assert!(tables.contains(&"hidden_entry_history".to_string()));
         assert!(tables.contains(&"ui_preferences".to_string()));
+    }
+
+    #[test]
+    fn migration_fuegt_optionalen_termin_zu_bestandsfahrzeugen_hinzu() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let previous_version = MIGRATIONS.len() - 1;
+        for migration in &MIGRATIONS[..previous_version] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.pragma_update(None, "user_version", previous_version as i64)
+            .unwrap();
+        conn.execute(
+            "INSERT INTO vehicles (
+                id, customer_name, vehicle_name, license_plate,
+                tuv_required, parts_ordered, parts_arrived, is_done,
+                position, created_at, updated_at
+             ) VALUES (
+                'bestand', 'Altbestand', 'Golf', 'M-A 1',
+                0, 0, 0, 0, 0,
+                '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+             )",
+            [],
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+
+        assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.len() as i64);
+        let appointment_column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('vehicles') WHERE name = 'appointment_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(appointment_column_count, 1);
+        assert_eq!(get_vehicle(&conn, "bestand").unwrap().appointment_at, None);
     }
 
     #[test]
@@ -1177,6 +1276,96 @@ mod tests {
 
         let err = update_vehicle(&conn, "fehlt", VehiclePatch::default()).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn fahrzeugtermin_setzen_aendern_und_loeschen() {
+        let conn = test_conn();
+        let vehicle = create_vehicle(&conn, vehicle_input("Termin", "Golf", "M-T 1")).unwrap();
+        assert_eq!(vehicle.appointment_at, None);
+
+        let scheduled =
+            update_vehicle_appointment(&conn, &vehicle.id, Some("2028-02-29T08:30".to_string()))
+                .unwrap();
+        assert_eq!(
+            scheduled.appointment_at.as_deref(),
+            Some("2028-02-29T08:30")
+        );
+        let serialized = serde_json::to_value(&scheduled).unwrap();
+        assert_eq!(serialized["appointmentAt"], "2028-02-29T08:30");
+        assert!(serialized.get("appointment_at").is_none());
+        assert_eq!(
+            list_vehicles(&conn).unwrap()[0].appointment_at.as_deref(),
+            Some("2028-02-29T08:30")
+        );
+
+        let date_only =
+            update_vehicle_appointment(&conn, &vehicle.id, Some("2028-03-01".to_string())).unwrap();
+        assert_eq!(date_only.appointment_at.as_deref(), Some("2028-03-01"));
+        let serialized = serde_json::to_value(&date_only).unwrap();
+        assert_eq!(serialized["appointmentAt"], "2028-03-01");
+
+        let changed =
+            update_vehicle_appointment(&conn, &vehicle.id, Some("2028-03-01T17:45".to_string()))
+                .unwrap();
+        assert_eq!(changed.appointment_at.as_deref(), Some("2028-03-01T17:45"));
+
+        let removed = update_vehicle_appointment(&conn, &vehicle.id, None).unwrap();
+        assert_eq!(removed.appointment_at, None);
+        assert_eq!(
+            get_vehicle(&conn, &vehicle.id).unwrap().appointment_at,
+            None
+        );
+
+        let err = update_vehicle_appointment(&conn, "fehlt", None).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn fahrzeugtermin_validiert_format_kalendertag_und_uhrzeit() {
+        let conn = test_conn();
+        let vehicle = create_vehicle(&conn, vehicle_input("Termin", "Golf", "M-T 2")).unwrap();
+        update_vehicle_appointment(&conn, &vehicle.id, Some("2000-02-29".to_string())).unwrap();
+        update_vehicle_appointment(&conn, &vehicle.id, Some("2000-02-29T23:59".to_string()))
+            .unwrap();
+
+        for invalid in [
+            "2026-08-12T08:30:00",
+            "2026-08-12T",
+            "2026-08-12T08",
+            "2026-8-12T08:30",
+            "2026-8-12",
+            "2026-08-12 08:30",
+            "0000-01-01",
+            "0000-01-01T00:00",
+            "2026-04-31",
+            "2026-00-12T08:30",
+            "2026-13-12T08:30",
+            "2026-04-31T08:30",
+            "2026-01-00T08:30",
+            "2025-02-29T08:30",
+            "2100-02-29T08:30",
+            "2026-08-12T24:00",
+            "2026-08-12T08:60",
+        ] {
+            let err = update_vehicle_appointment(&conn, &vehicle.id, Some(invalid.to_string()))
+                .unwrap_err();
+            assert_eq!(
+                err.code,
+                ErrorCode::Validation,
+                "unerwartet gültig: {invalid}"
+            );
+            assert_eq!(err.field.as_deref(), Some("appointmentAt"));
+        }
+
+        // Ungültige Änderungen lassen den zuvor gespeicherten Wert unverändert.
+        assert_eq!(
+            get_vehicle(&conn, &vehicle.id)
+                .unwrap()
+                .appointment_at
+                .as_deref(),
+            Some("2000-02-29T23:59")
+        );
     }
 
     #[test]
@@ -1395,8 +1584,11 @@ mod tests {
         assert!(!default.payments_panel_collapsed);
         assert_eq!(default.payments_panel_height, DEFAULT_PAYMENTS_PANEL_HEIGHT);
         assert_eq!(default.vehicle_column_order, default_vehicle_column_order());
+        assert_eq!(default.vehicle_column_order[0], "appointmentAt");
         assert!(default.vehicle_hidden_columns.is_empty());
 
+        // Alte Einstellungen kannten die damals feste Terminspalte noch nicht.
+        // Sie wird vorne ergänzt, ohne die Nutzerreihenfolge zu verlieren.
         let order = vec![
             "isDone".to_string(),
             "unbekannt".to_string(),
@@ -1404,8 +1596,9 @@ mod tests {
             "customerName".to_string(),
         ];
         let updated = update_vehicle_column_order(&conn, &order).unwrap();
-        assert_eq!(updated.vehicle_column_order[0], "isDone");
-        assert_eq!(updated.vehicle_column_order[1], "customerName");
+        assert_eq!(updated.vehicle_column_order[0], "appointmentAt");
+        assert_eq!(updated.vehicle_column_order[1], "isDone");
+        assert_eq!(updated.vehicle_column_order[2], "customerName");
         assert_eq!(
             updated.vehicle_column_order.len(),
             VEHICLE_COLUMN_ORDER_DEFAULT.len()
@@ -1413,6 +1606,20 @@ mod tests {
         assert!(!updated
             .vehicle_column_order
             .contains(&"unbekannt".to_string()));
+
+        // Sobald die Terminspalte Teil der gespeicherten Reihenfolge ist, darf
+        // sie wie jede andere Spalte frei verschoben werden.
+        let moved = update_vehicle_column_order(
+            &conn,
+            &[
+                "isDone".to_string(),
+                "appointmentAt".to_string(),
+                "customerName".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(moved.vehicle_column_order[0], "isDone");
+        assert_eq!(moved.vehicle_column_order[1], "appointmentAt");
         assert!(
             update_payments_panel_collapsed(&conn, true)
                 .unwrap()
@@ -1714,7 +1921,7 @@ mod tests {
     }
 
     #[test]
-    fn zahlung_bezahlt_und_rueckgaengig() {
+    fn zahlungsstatus_ist_unabhaengig_vom_fahrzeugstatus() {
         let conn = test_conn();
         let vehicle =
             create_vehicle(&conn, vehicle_input("Öztürk", "Mercedes Vito", "M-OE 7")).unwrap();
@@ -1737,8 +1944,8 @@ mod tests {
         assert!(paid.paid_at.is_some());
         assert!(list_open_payments(&conn).unwrap().is_empty());
         assert_eq!(list_paid_payments(&conn).unwrap(), vec![paid]);
-        assert!(get_vehicle(&conn, &vehicle.id).unwrap().is_done);
-        assert_eq!(list_completed_vehicle_history(&conn).unwrap().len(), 1);
+        assert!(!get_vehicle(&conn, &vehicle.id).unwrap().is_done);
+        assert!(list_completed_vehicle_history(&conn).unwrap().is_empty());
 
         let restored = restore_payment(&conn, &payment.id).unwrap();
         assert!(restored.paid_at.is_none());
@@ -1749,5 +1956,38 @@ mod tests {
 
         let err = mark_payment_paid(&conn, "fehlt").unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn alte_zahlungskopplung_wird_beim_rueckgaengig_nicht_mehr_ausgefuehrt() {
+        let conn = test_conn();
+        let vehicle =
+            create_vehicle(&conn, vehicle_input("Altbestand", "VW Golf", "M-A 1")).unwrap();
+        let payment = create_payment(
+            &conn,
+            NewPayment {
+                vehicle_id: Some(vehicle.id.clone()),
+                customer_name: "Altbestand".to_string(),
+                amount_cents: 50000,
+                note: String::new(),
+            },
+        )
+        .unwrap();
+        update_vehicle_status(&conn, &vehicle.id, VehicleStatusField::IsDone, true).unwrap();
+        conn.execute(
+            "UPDATE payments
+             SET paid_at = updated_at,
+                 completed_vehicle_on_paid = 1,
+                 vehicle_history_created_on_paid = 1
+             WHERE id = ?1",
+            [&payment.id],
+        )
+        .unwrap();
+
+        restore_payment(&conn, &payment.id).unwrap();
+
+        assert!(get_vehicle(&conn, &vehicle.id).unwrap().is_done);
+        assert_eq!(list_completed_vehicle_history(&conn).unwrap().len(), 1);
+        assert!(get_payment(&conn, &payment.id).unwrap().paid_at.is_none());
     }
 }
