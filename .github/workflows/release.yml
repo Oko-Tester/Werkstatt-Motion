@@ -45,7 +45,7 @@ jobs:
       - name: Abhängigkeiten installieren
         run: pnpm install --frozen-lockfile
 
-      - name: Installer signieren und Release veröffentlichen
+      - name: Installer signieren und Release-Entwurf erstellen
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,8 +60,10 @@ jobs:
 
             Vor jedem automatischen Update erstellt die App ein Sicherheits-Backup
             im Ordner `Backups` neben der installierten Programmdatei.
-          releaseDraft: false
+          # Unveränderliche GitHub-Releases dürfen nach der Veröffentlichung
+          # keine neuen Assets mehr annehmen. Deshalb zuerst den vollständigen
+          # Entwurf inklusive Installer, Signatur und latest.json erzeugen.
+          releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
           updaterJsonPreferNsis: true
-
