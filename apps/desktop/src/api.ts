@@ -203,6 +203,11 @@ export interface UpdateBackupResult {
   path: string;
 }
 
+export interface DailyBackupResult {
+  created: boolean;
+  path: string;
+}
+
 export interface RestorePreview {
   cancelled: boolean;
   createdAt: string | null;
@@ -215,6 +220,11 @@ export interface RestorePreview {
 /** Öffnet den nativen Speichern-Dialog und schreibt die Backup-Datei. */
 export function createBackup(): Promise<BackupResult> {
   return invoke("create_backup");
+}
+
+/** Erstellt höchstens ein automatisches Backup pro lokalem Kalendertag. */
+export function createDailyBackup(): Promise<DailyBackupResult> {
+  return invoke("create_daily_backup");
 }
 
 /** Sichert die Daten vor einem Update neben der installierten Programmdatei. */

@@ -62,6 +62,7 @@ export interface FakeBackend {
   secretHistory: SecretHistoryEntry[];
   preferences: UiPreferences;
   backups: Snapshot[];
+  dailyBackups: Snapshot[];
   calls: string[];
   callPayloads: Array<{ cmd: string; payload: Record<string, unknown> }>;
   activeSessionTokens: Set<string>;
@@ -294,6 +295,7 @@ export function installFakeBackend(seed?: {
   };
 
   const backups: Snapshot[] = [];
+  const dailyBackups: Snapshot[] = [];
   let stagedRestore: Snapshot | null = null;
   const calls: string[] = [];
   const callPayloads: Array<{ cmd: string; payload: Record<string, unknown> }> = [];
@@ -826,6 +828,13 @@ export function installFakeBackend(seed?: {
         backups.push(snapshot);
         return { saved: true, path: "/backups/test.werkstattbackup" };
       }
+      case "create_daily_backup": {
+        if (dailyBackups.length === 0) {
+          dailyBackups.push(takeSnapshot());
+          return { created: true, path: "/backups/taeglich-heute.werkstattbackup" };
+        }
+        return { created: false, path: "/backups/taeglich-heute.werkstattbackup" };
+      }
       case "create_update_backup": {
         const snapshot = takeSnapshot();
         backups.push(snapshot);
@@ -887,6 +896,7 @@ export function installFakeBackend(seed?: {
     secretHistory,
     preferences,
     backups,
+    dailyBackups,
     calls,
     callPayloads,
     activeSessionTokens,

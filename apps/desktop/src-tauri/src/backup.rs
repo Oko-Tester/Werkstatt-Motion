@@ -20,6 +20,9 @@ use crate::keys::KeyMaterial;
 pub const BACKUP_FORMAT: &str = "werkstatt-backup";
 pub const BACKUP_FORMAT_VERSION: i64 = 1;
 pub const BACKUP_FILE_EXTENSION: &str = "werkstattbackup";
+pub const DAILY_BACKUP_RETENTION_DAYS: i64 = 14;
+
+const DAILY_BACKUP_PREFIX: &str = "taeglich-";
 
 const KEY_RECOVERY_KDF: &str = "hkdf-sha256";
 const KEY_RECOVERY_AAD: &[u8] = b"werkstatt-backup-key-recovery-v1";
@@ -350,6 +353,104 @@ pub fn write_safety_backup(
     Ok(path)
 }
 
+/// Ergebnis des täglichen Backup-Laufs. Existiert für den heutigen
+/// Kalendertag bereits eine Sicherung, bleibt `created` false.
+pub struct DailyBackupResult {
+    pub created: bool,
+    pub path: PathBuf,
+}
+
+fn is_calendar_date(value: &str) -> bool {
+    value.len() == 10
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            4 | 7 => byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
+}
+
+fn daily_backup_date(file_name: &str) -> Option<&str> {
+    let date = file_name
+        .strip_prefix(DAILY_BACKUP_PREFIX)?
+        .strip_suffix(&format!(".{BACKUP_FILE_EXTENSION}"))?;
+    is_calendar_date(date).then_some(date)
+}
+
+/// Entfernt ausschließlich tägliche Sicherungen, die außerhalb des
+/// Aufbewahrungsfensters liegen. Andere automatische und manuelle Backups
+/// werden bewusst nicht angefasst.
+fn cleanup_daily_backups(backups_dir: &Path, cutoff_date: &str) -> Result<(), ApiError> {
+    let entries = std::fs::read_dir(backups_dir).map_err(|_| io_error())?;
+    for entry in entries {
+        let entry = entry.map_err(|_| io_error())?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(date) = daily_backup_date(file_name) else {
+            continue;
+        };
+        if date < cutoff_date {
+            std::fs::remove_file(entry.path()).map_err(|_| io_error())?;
+        }
+    }
+    Ok(())
+}
+
+fn write_daily_backup_for_dates(
+    conn: &Connection,
+    keys: &KeyMaterial,
+    backups_dir: &Path,
+    today: &str,
+    cutoff_date: &str,
+) -> Result<DailyBackupResult, ApiError> {
+    if !is_calendar_date(today) || !is_calendar_date(cutoff_date) {
+        return Err(ApiError::backup(
+            "Backup-Datum konnte nicht ermittelt werden",
+        ));
+    }
+
+    std::fs::create_dir_all(backups_dir).map_err(|_| io_error())?;
+    let path = backups_dir.join(format!(
+        "{DAILY_BACKUP_PREFIX}{today}.{BACKUP_FILE_EXTENSION}"
+    ));
+
+    let created = if path.is_file() {
+        false
+    } else {
+        let temporary = backups_dir.join(format!(
+            ".{DAILY_BACKUP_PREFIX}{today}.{BACKUP_FILE_EXTENSION}.tmp"
+        ));
+        let bytes = create_backup_bytes(conn, keys)?;
+        std::fs::write(&temporary, bytes).map_err(|_| io_error())?;
+        if std::fs::rename(&temporary, &path).is_err() {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(ApiError::backup(
+                "Das tägliche Backup konnte nicht abgeschlossen werden",
+            ));
+        }
+        true
+    };
+
+    cleanup_daily_backups(backups_dir, cutoff_date)?;
+    Ok(DailyBackupResult { created, path })
+}
+
+/// Erstellt höchstens ein Backup pro lokalem Kalendertag und bewahrt nur das
+/// aktuelle 14-Tage-Fenster auf. Die Datumsberechnung läuft über SQLite und
+/// richtet sich nach dem lokalen Kalendertag des Betriebssystems.
+pub fn ensure_daily_backup(
+    conn: &Connection,
+    keys: &KeyMaterial,
+    backups_dir: &Path,
+) -> Result<DailyBackupResult, ApiError> {
+    let (today, cutoff_date): (String, String) = conn.query_row(
+        "SELECT date('now', 'localtime'), date('now', 'localtime', ?1)",
+        [format!("-{} days", DAILY_BACKUP_RETENTION_DAYS - 1)],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    write_daily_backup_for_dates(conn, keys, backups_dir, &today, &cutoff_date)
+}
+
 fn file_name_part(value: &str) -> String {
     value
         .chars()
@@ -524,6 +625,55 @@ mod tests {
             serde_json::from_slice(&create_backup_bytes(&conn, &keys).unwrap()).unwrap();
         assert_ne!(a.key_recovery.nonce, b.key_recovery.nonce);
         assert_ne!(a.key_recovery.salt, b.key_recovery.salt);
+    }
+
+    #[test]
+    fn taegliches_backup_wird_pro_tag_nur_einmal_erstellt() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&dir.path().join("aktuell.db"));
+        let keys = test_keys();
+        seed(&conn, &keys);
+        let backups_dir = dir.path().join("backups");
+
+        let first =
+            write_daily_backup_for_dates(&conn, &keys, &backups_dir, "2026-08-11", "2026-07-29")
+                .unwrap();
+        let first_bytes = std::fs::read(&first.path).unwrap();
+        let second =
+            write_daily_backup_for_dates(&conn, &keys, &backups_dir, "2026-08-11", "2026-07-29")
+                .unwrap();
+
+        assert!(first.created);
+        assert!(!second.created);
+        assert_eq!(first.path, second.path);
+        assert_eq!(std::fs::read(&second.path).unwrap(), first_bytes);
+        validate_backup_bytes(&first_bytes, None, Some(&keys.master_key), None).unwrap();
+    }
+
+    #[test]
+    fn taegliche_backups_werden_nach_14_tagen_bereinigt() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&dir.path().join("aktuell.db"));
+        let keys = test_keys();
+        let backups_dir = dir.path().join("backups");
+        std::fs::create_dir_all(&backups_dir).unwrap();
+
+        let expired = backups_dir.join("taeglich-2026-07-28.werkstattbackup");
+        let cutoff = backups_dir.join("taeglich-2026-07-29.werkstattbackup");
+        let unrelated = backups_dir.join("vor-wiederherstellung-alt.werkstattbackup");
+        std::fs::write(&expired, b"alt").unwrap();
+        std::fs::write(&cutoff, b"behalten").unwrap();
+        std::fs::write(&unrelated, b"behalten").unwrap();
+
+        let result =
+            write_daily_backup_for_dates(&conn, &keys, &backups_dir, "2026-08-11", "2026-07-29")
+                .unwrap();
+
+        assert!(result.created);
+        assert!(!expired.exists());
+        assert!(cutoff.exists());
+        assert!(unrelated.exists());
+        assert!(result.path.exists());
     }
 
     #[test]

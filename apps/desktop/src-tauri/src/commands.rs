@@ -483,6 +483,13 @@ pub struct UpdateBackupResult {
     pub path: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyBackupResult {
+    pub created: bool,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestorePreview {
@@ -565,6 +572,39 @@ pub async fn create_backup(
     Ok(BackupResult {
         saved: true,
         path: Some(path.display().to_string()),
+    })
+}
+
+/// Erstellt bei Bedarf die heutige automatische Sicherung und entfernt
+/// tägliche Backups außerhalb des 14-Tage-Aufbewahrungsfensters.
+#[tauri::command]
+pub fn create_daily_backup(
+    vault: State<'_, Vault>,
+    db: State<'_, Db>,
+    paths: State<'_, StoragePaths>,
+) -> Result<DailyBackupResult, ApiError> {
+    let keys = {
+        let state = vault.lock()?;
+        match &state.keys {
+            Some(material) => KeyMaterial {
+                master_key: material.master_key.clone(),
+                recovery_code: material.recovery_code.clone(),
+            },
+            None => {
+                return Err(state
+                    .key_error
+                    .clone()
+                    .unwrap_or_else(ApiError::keystore_unavailable))
+            }
+        }
+    };
+    let result = {
+        let state = db.lock()?;
+        backup::ensure_daily_backup(state.conn()?, &keys, &paths.backups_dir)?
+    };
+    Ok(DailyBackupResult {
+        created: result.created,
+        path: result.path.display().to_string(),
     })
 }
 

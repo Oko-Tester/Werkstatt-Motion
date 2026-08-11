@@ -44,6 +44,7 @@ interface UndoState {
 const UNDO_TIMEOUT_MS = 6000;
 const NOTICE_TIMEOUT_MS = 6000;
 const REORDER_DEBOUNCE_MS = 300;
+const DAILY_BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 function isDraftId(id: string): boolean {
   return id.startsWith("draft-");
@@ -188,6 +189,27 @@ export default function App() {
 
   useEffect(() => {
     void loadCoreData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    function createDailyBackup() {
+      void api.createDailyBackup().catch((err) => {
+        if (active) {
+          showNotice(`Automatisches Backup fehlgeschlagen: ${toApiError(err).message}`);
+        }
+      });
+    }
+
+    createDailyBackup();
+    const timer = window.setInterval(createDailyBackup, DAILY_BACKUP_CHECK_INTERVAL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+    // Der Backend-Command ist idempotent und entscheidet anhand des lokalen Datums.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

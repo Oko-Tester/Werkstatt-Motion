@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { clearMocks } from "@tauri-apps/api/mocks";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { installFakeBackend } from "./test/fakeBackend";
 import type { FakeBackend } from "./test/fakeBackend";
@@ -29,6 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   clearMocks();
 });
 
@@ -48,6 +49,8 @@ describe("App: Laden und Suche", () => {
     expect(screen.getByText(/616,40/)).toBeInTheDocument();
     expect(backend.calls).toContain("list_vehicles");
     expect(backend.calls).toContain("list_open_payments");
+    await waitFor(() => expect(backend.calls).toContain("create_daily_backup"));
+    expect(backend.dailyBackups).toHaveLength(1);
   });
 
   it("filtert Fahrzeuge sofort über das Suchfeld", async () => {
@@ -62,6 +65,22 @@ describe("App: Laden und Suche", () => {
     await renderApp();
     fireEvent.keyDown(document.body, { key: "f", ctrlKey: true });
     expect(screen.getByRole("searchbox", { name: "Fahrzeuge durchsuchen" })).toHaveFocus();
+  });
+
+  it("prüft beim Start und danach stündlich auf ein tägliches Backup", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderApp();
+    await waitFor(() => {
+      expect(backend.calls.filter((cmd) => cmd === "create_daily_backup")).toHaveLength(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+
+    await waitFor(() => {
+      expect(backend.calls.filter((cmd) => cmd === "create_daily_backup")).toHaveLength(2);
+    });
+    // Der Backend-Command legt innerhalb desselben Tages keine zweite Datei an.
+    expect(backend.dailyBackups).toHaveLength(1);
   });
 });
 

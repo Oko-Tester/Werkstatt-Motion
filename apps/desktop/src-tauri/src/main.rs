@@ -125,6 +125,7 @@ fn main() {
             commands::list_hidden_entry_history,
             commands::list_secret_history,
             commands::create_backup,
+            commands::create_daily_backup,
             commands::create_update_backup,
             commands::prepare_restore,
             commands::confirm_restore,

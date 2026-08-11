@@ -140,6 +140,19 @@ offline nutzbar.
 
 ## Datensicherung
 
+Werkstatt Motion erstellt automatisch höchstens ein vollständiges Backup pro
+Kalendertag. Beim App-Start wird sofort geprüft, ob die heutige Sicherung fehlt;
+bei länger geöffneter App läuft diese Prüfung stündlich weiter. Tägliche Backups
+werden für 14 Tage aufbewahrt, ältere tägliche Sicherungen löscht die App
+automatisch. Dazu muss die App an dem jeweiligen Tag geöffnet sein.
+
+Die täglichen Sicherungen liegen im Anwendungsdatenverzeichnis:
+
+```text
+Windows: %APPDATA%\de.werkstattmotion.desktop\backups
+Linux:   ~/.local/share/de.werkstattmotion.desktop/backups
+```
+
 Über **„Backup“** lässt sich jederzeit eine Sicherung erstellen – zum Beispiel
 auf einem USB-Stick. Mit **„Wiederherstellen“** kann eine Sicherung später
 wieder eingespielt werden.
@@ -147,23 +160,19 @@ wieder eingespielt werden.
 **Empfehlung:** Regelmäßig ein Backup erstellen und getrennt vom Werkstatt-PC
 aufbewahren.
 
-### Daten nach einem Update wiederherstellen
+### Automatische Sicherung wiederherstellen
 
-Die automatische Sicherung liegt im Anwendungsdatenverzeichnis. Die
-Standardpfade lauten:
-
-```text
-Windows: %APPDATA%\de.werkstattmotion.desktop\backups
-Linux:   ~/.local/share/de.werkstattmotion.desktop/backups
-```
-
-Unter Linux kann `$XDG_DATA_HOME` den Ordner `~/.local/share` ersetzen.
+Tägliche Sicherungen und Sicherungen vor einer Wiederherstellung liegen in den
+oben genannten App-Datenpfaden. Unter Linux kann `$XDG_DATA_HOME` den Ordner
+`~/.local/share` ersetzen. Die verpflichtende Sicherung vor einem Update liegt
+dagegen im Unterordner `Backups` neben der installierten Programmdatei.
 
 So lässt sich die Sicherung öffnen und wieder einspielen:
 
 1. Den oben genannten Ordner im Dateimanager öffnen.
-2. Die neueste Datei auswählen, deren Name mit `vor-update-` beginnt und auf
-   `.werkstattbackup` endet.
+2. Die gewünschte Datei auswählen. Tägliche Sicherungen beginnen mit
+   `taeglich-`, Update-Sicherungen mit `vor-update-`; beide enden auf
+   `.werkstattbackup`.
 3. Werkstatt Motion öffnen und im Drei-Punkte-Menü auf
    **„Wiederherstellen“** klicken.
 4. Die Backup-Datei aus dem Ordner auswählen und
