@@ -133,8 +133,12 @@ neue Version verfügbar, zeigt Werkstatt Motion die Versionsnummer an. Das
 Update startet erst nach einem Klick auf **„Update installieren“**.
 
 Vor der Installation erstellt die App automatisch ein vollständiges
-Sicherheits-Backup. Kann dieses Backup nicht gespeichert werden, wird das
-Update nicht durchgeführt. Für die Update-Suche wird kurzzeitig eine
+Sicherheits-Backup. Es landet im Unterordner `Backups` neben der installierten
+Programmdatei; ist dieser Ordner nicht beschreibbar – unter Linux etwa bei
+einer Paketinstallation nach `/usr/bin` oder bei einem AppImage –, weicht die
+App auf den Backup-Ordner im Anwendungsdatenverzeichnis aus. Erst wenn auch
+dort keine vollständige Sicherung geschrieben werden kann, wird das Update
+nicht durchgeführt. Für die Update-Suche wird kurzzeitig eine
 Internetverbindung benötigt; ansonsten bleibt Werkstatt Motion vollständig
 offline nutzbar.
 
@@ -165,7 +169,10 @@ aufbewahren.
 Tägliche Sicherungen und Sicherungen vor einer Wiederherstellung liegen in den
 oben genannten App-Datenpfaden. Unter Linux kann `$XDG_DATA_HOME` den Ordner
 `~/.local/share` ersetzen. Die verpflichtende Sicherung vor einem Update liegt
-dagegen im Unterordner `Backups` neben der installierten Programmdatei.
+im Unterordner `Backups` neben der installierten Programmdatei – und, wenn dort
+keine Schreibrechte bestehen, ebenfalls in den oben genannten App-Datenpfaden.
+Unter Linux ist das der Regelfall: `.deb`-Installationen liegen unter `/usr`,
+und ein AppImage läuft aus einem schreibgeschützten Mount.
 
 So lässt sich die Sicherung öffnen und wieder einspielen:
 

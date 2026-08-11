@@ -97,6 +97,43 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Schreibt eine Datei vollständig und dauerhaft auf den Datenträger und
+/// prüft anschließend die geschriebene Länge. Ein halb geschriebenes Backup
+/// darf nie als Erfolg gelten.
+fn write_file_complete(path: &Path, bytes: &[u8]) -> Result<(), ApiError> {
+    use std::io::Write;
+
+    let mut file = std::fs::File::create(path).map_err(|_| io_error())?;
+    file.write_all(bytes).map_err(|_| io_error())?;
+    file.sync_all().map_err(|_| io_error())?;
+    drop(file);
+
+    let written = std::fs::metadata(path).map_err(|_| io_error())?.len();
+    if written != bytes.len() as u64 {
+        return Err(io_error());
+    }
+    Ok(())
+}
+
+/// Legt den Zielordner an und schreibt die Backup-Datei atomar hinein:
+/// erst vollständig unter temporärem Namen, dann umbenennen. Schlägt
+/// irgendetwas davon fehl, bleibt kein halbes Backup zurück.
+fn write_backup_file(dir: &Path, file_name: &str, bytes: &[u8]) -> Result<PathBuf, ApiError> {
+    std::fs::create_dir_all(dir).map_err(|_| io_error())?;
+    let path = dir.join(file_name);
+    let temporary = dir.join(format!(".{file_name}.tmp"));
+
+    if let Err(err) = write_file_complete(&temporary, bytes) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(err);
+    }
+    if std::fs::rename(&temporary, &path).is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(io_error());
+    }
+    Ok(path)
+}
+
 /// Konsistenter Schnappschuss der laufenden Datenbank über die
 /// SQLite-Online-Backup-API (funktioniert auch mit aktivem WAL).
 fn snapshot_db_bytes(conn: &Connection) -> Result<Vec<u8>, ApiError> {
@@ -343,14 +380,10 @@ pub fn write_safety_backup(
     keys: &KeyMaterial,
     backups_dir: &Path,
 ) -> Result<PathBuf, ApiError> {
-    std::fs::create_dir_all(backups_dir).map_err(|_| io_error())?;
     let stamp = db::now(conn)?.replace(':', "-");
-    let path = backups_dir.join(format!(
-        "vor-wiederherstellung-{stamp}.{BACKUP_FILE_EXTENSION}"
-    ));
+    let file_name = format!("vor-wiederherstellung-{stamp}.{BACKUP_FILE_EXTENSION}");
     let bytes = create_backup_bytes(conn, keys)?;
-    std::fs::write(&path, bytes).map_err(|_| io_error())?;
-    Ok(path)
+    write_backup_file(backups_dir, &file_name, &bytes)
 }
 
 /// Ergebnis des täglichen Backup-Laufs. Existiert für den heutigen
@@ -410,24 +443,16 @@ fn write_daily_backup_for_dates(
     }
 
     std::fs::create_dir_all(backups_dir).map_err(|_| io_error())?;
-    let path = backups_dir.join(format!(
-        "{DAILY_BACKUP_PREFIX}{today}.{BACKUP_FILE_EXTENSION}"
-    ));
+    let file_name = format!("{DAILY_BACKUP_PREFIX}{today}.{BACKUP_FILE_EXTENSION}");
+    let path = backups_dir.join(&file_name);
 
     let created = if path.is_file() {
         false
     } else {
-        let temporary = backups_dir.join(format!(
-            ".{DAILY_BACKUP_PREFIX}{today}.{BACKUP_FILE_EXTENSION}.tmp"
-        ));
         let bytes = create_backup_bytes(conn, keys)?;
-        std::fs::write(&temporary, bytes).map_err(|_| io_error())?;
-        if std::fs::rename(&temporary, &path).is_err() {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(ApiError::backup(
-                "Das tägliche Backup konnte nicht abgeschlossen werden",
-            ));
-        }
+        write_backup_file(backups_dir, &file_name, &bytes).map_err(|_| {
+            ApiError::backup("Das tägliche Backup konnte nicht abgeschlossen werden")
+        })?;
         true
     };
 
@@ -465,45 +490,78 @@ fn file_name_part(value: &str) -> String {
         .collect()
 }
 
-/// Erstellt die verpflichtende Sicherung vor einem App-Update. Sie liegt
-/// bewusst im Unterordner `Backups` neben der installierten Programmdatei.
-/// Kann dort nicht vollständig geschrieben werden, darf das Update nicht
-/// fortgesetzt werden.
+/// Möglicher Ablageort für die Sicherung vor einem Update. Der Ordner neben
+/// der Installation ist der Wunschort, weil die Sicherung dort auch ohne
+/// laufende App sofort auffindbar ist. Auf Linux gehört die Installation
+/// aber häufig root (`/usr/bin`, Paketinstallation) oder liegt in einem
+/// schreibgeschützten AppImage-Mount – dort kann ein normaler Nutzer keinen
+/// Ordner anlegen. Deshalb gibt es immer einen beschreibbaren Ausweichort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateBackupTarget {
+    pub dir: PathBuf,
+    /// Liegt dieser Ordner neben der installierten Programmdatei?
+    pub next_to_installation: bool,
+}
+
+impl UpdateBackupTarget {
+    /// Unterordner `Backups` neben der installierten Programmdatei.
+    pub fn next_to_installation(install_dir: &Path) -> Self {
+        Self {
+            dir: install_dir.join("Backups"),
+            next_to_installation: true,
+        }
+    }
+
+    /// Backup-Ordner im Anwendungsdatenverzeichnis – derselbe Ort, an dem
+    /// auch die täglichen Sicherungen liegen.
+    pub fn app_data(backups_dir: &Path) -> Self {
+        Self {
+            dir: backups_dir.to_path_buf(),
+            next_to_installation: false,
+        }
+    }
+}
+
+/// Ergebnis der verpflichtenden Sicherung vor einem Update.
+#[derive(Debug, Clone)]
+pub struct UpdateBackup {
+    pub path: PathBuf,
+    /// false, wenn auf das Anwendungsdatenverzeichnis ausgewichen wurde.
+    pub next_to_installation: bool,
+}
+
+/// Erstellt die verpflichtende Sicherung vor einem App-Update. Die Ablageorte
+/// werden der Reihe nach versucht; der erste, in dem die Datei vollständig
+/// landet, gewinnt. Erst wenn keiner davon funktioniert, schlägt der Aufruf
+/// fehl – und dann darf das Update nicht fortgesetzt werden.
 pub fn write_update_backup(
     conn: &Connection,
     keys: &KeyMaterial,
-    install_dir: &Path,
+    targets: &[UpdateBackupTarget],
     current_version: &str,
     target_version: &str,
-) -> Result<PathBuf, ApiError> {
-    let backups_dir = install_dir.join("Backups");
-    std::fs::create_dir_all(&backups_dir).map_err(|_| {
-        ApiError::backup(
-            "Der Backup-Ordner neben der installierten App konnte nicht angelegt werden",
-        )
-    })?;
-
+) -> Result<UpdateBackup, ApiError> {
     let stamp = db::now(conn)?.replace(':', "-");
     let current = file_name_part(current_version);
     let target = file_name_part(target_version);
-    let path = backups_dir.join(format!(
-        "vor-update-{current}-auf-{target}-{stamp}.{BACKUP_FILE_EXTENSION}"
-    ));
-    let temporary = path.with_extension(format!("{BACKUP_FILE_EXTENSION}.tmp"));
+    let file_name = format!("vor-update-{current}-auf-{target}-{stamp}.{BACKUP_FILE_EXTENSION}");
     let bytes = create_backup_bytes(conn, keys)?;
 
-    std::fs::write(&temporary, bytes).map_err(|_| {
-        ApiError::backup(
-            "Das Sicherheits-Backup konnte nicht neben der installierten App gespeichert werden",
-        )
-    })?;
-    if std::fs::rename(&temporary, &path).is_err() {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(ApiError::backup(
-            "Das Sicherheits-Backup konnte nicht abgeschlossen werden",
-        ));
+    for candidate in targets {
+        let Ok(path) = write_backup_file(&candidate.dir, &file_name, &bytes) else {
+            continue;
+        };
+        return Ok(UpdateBackup {
+            path,
+            next_to_installation: candidate.next_to_installation,
+        });
     }
-    Ok(path)
+
+    Err(ApiError::backup(
+        "Das Sicherheits-Backup vor dem Update konnte nirgends gespeichert werden – \
+         weder neben der installierten App noch im Datenordner der App. \
+         Das Update wurde deshalb nicht gestartet.",
+    ))
 }
 
 #[cfg(test)]
@@ -560,6 +618,16 @@ mod tests {
         .unwrap();
     }
 
+    /// Ordner, in dem sich nichts anlegen lässt: Der Elternpfad ist eine
+    /// Datei. Das bildet plattformunabhängig nach, was unter Linux ein
+    /// Installationsordner ohne Schreibrecht (`/usr/bin`) oder ein
+    /// schreibgeschützter AppImage-Mount auslöst.
+    fn nicht_beschreibbarer_ordner(dir: &Path) -> PathBuf {
+        let blocker = dir.join("nicht-beschreibbar");
+        std::fs::write(&blocker, b"datei statt ordner").unwrap();
+        blocker.join("Backups")
+    }
+
     #[test]
     fn update_backup_liegt_neben_der_installation_und_ist_vollstaendig() {
         let dir = tempfile::tempdir().unwrap();
@@ -569,18 +637,89 @@ mod tests {
         let keys = test_keys();
         seed(&conn, &keys);
 
-        let path = write_update_backup(&conn, &keys, &install_dir, "1.0.0", "1.0.1").unwrap();
+        let targets = [
+            UpdateBackupTarget::next_to_installation(&install_dir),
+            UpdateBackupTarget::app_data(&dir.path().join("daten-backups")),
+        ];
+        let result = write_update_backup(&conn, &keys, &targets, "1.0.0", "1.0.1").unwrap();
 
-        assert_eq!(path.parent(), Some(install_dir.join("Backups").as_path()));
-        assert!(path.exists());
-        assert!(path
+        assert!(result.next_to_installation);
+        assert_eq!(
+            result.path.parent(),
+            Some(install_dir.join("Backups").as_path())
+        );
+        assert!(result.path.exists());
+        assert!(result
+            .path
             .file_name()
             .unwrap()
             .to_string_lossy()
             .starts_with("vor-update-1.0.0-auf-1.0.1-"));
-        let bytes = std::fs::read(path).unwrap();
+        let bytes = std::fs::read(&result.path).unwrap();
         assert!(!String::from_utf8_lossy(&bytes).contains(MARKER_NAME));
         validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
+    }
+
+    #[test]
+    fn update_backup_weicht_auf_den_datenordner_aus_wenn_die_installation_gesperrt_ist() {
+        // Linux-Fall: Neben der Installation darf der Nutzer keinen Ordner
+        // anlegen. Das Update darf daran nicht scheitern – die Sicherung muss
+        // vollständig im Datenordner landen.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&dir.path().join("aktuell.db"));
+        let keys = test_keys();
+        seed(&conn, &keys);
+
+        let gesperrt = nicht_beschreibbarer_ordner(dir.path());
+        let daten_backups = dir.path().join("daten").join("backups");
+        let targets = [
+            UpdateBackupTarget {
+                dir: gesperrt.clone(),
+                next_to_installation: true,
+            },
+            UpdateBackupTarget::app_data(&daten_backups),
+        ];
+        let result = write_update_backup(&conn, &keys, &targets, "1.0.0", "1.0.1").unwrap();
+
+        assert!(!result.next_to_installation);
+        assert_eq!(result.path.parent(), Some(daten_backups.as_path()));
+        assert!(!gesperrt.exists());
+        let bytes = std::fs::read(&result.path).unwrap();
+        // Der Ausweichort liefert kein halbes Backup: Es ist vollständig
+        // gültig und enthält die versteckten Daten weiterhin verschlüsselt.
+        assert!(!String::from_utf8_lossy(&bytes).contains(MARKER_NAME));
+        let validated = validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
+        assert_eq!(validated.hidden_count, 1);
+        assert_eq!(validated.vehicle_count, 1);
+
+        // Keine temporäre Restdatei im Ausweichordner.
+        let übrig: Vec<_> = std::fs::read_dir(&daten_backups).unwrap().collect();
+        assert_eq!(übrig.len(), 1);
+    }
+
+    #[test]
+    fn update_backup_scheitert_erst_wenn_kein_einziger_ort_funktioniert() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&dir.path().join("aktuell.db"));
+        let keys = test_keys();
+        seed(&conn, &keys);
+
+        let gesperrt = nicht_beschreibbarer_ordner(dir.path());
+        let targets = [
+            UpdateBackupTarget {
+                dir: gesperrt.clone(),
+                next_to_installation: true,
+            },
+            UpdateBackupTarget {
+                dir: gesperrt.join("noch-tiefer"),
+                next_to_installation: false,
+            },
+        ];
+        let err = write_update_backup(&conn, &keys, &targets, "1.0.0", "1.0.1").unwrap_err();
+
+        assert_eq!(err.code, ErrorCode::Backup);
+        assert!(err.message.contains("nicht gestartet"));
+        assert!(!format!("{err} {err:?}").contains(MARKER_NAME));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -138,6 +138,64 @@ impl SecretSessions {
 pub struct StoragePaths {
     pub db_path: PathBuf,
     pub backups_dir: PathBuf,
+}
+
+/// Ordner der installierten Programmdatei. Bei einem AppImage zeigt
+/// `current_exe()` in einen schreibgeschützten Mount (`/tmp/.mount_…`);
+/// gemeint ist dann der Ordner, in dem die AppImage-Datei selbst liegt.
+#[cfg(target_os = "linux")]
+fn appimage_dir() -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os("APPIMAGE")?);
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn appimage_dir() -> Option<PathBuf> {
+    None
+}
+
+/// Systemweite Installationsorte gehören unter Linux root und werden von der
+/// Paketverwaltung verwaltet. Sicherungen haben dort nichts verloren: Als
+/// Nutzer darf man dort nicht schreiben, und ein Paket-Update würde die
+/// Dateien mitnehmen.
+#[cfg(target_os = "linux")]
+fn is_system_location(dir: &Path) -> bool {
+    ["/usr", "/opt", "/snap", "/app", "/bin", "/sbin", "/nix"]
+        .iter()
+        .any(|prefix| dir.starts_with(prefix))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_system_location(_dir: &Path) -> bool {
+    false
+}
+
+fn installation_dir() -> Option<PathBuf> {
+    appimage_dir().or_else(|| std::env::current_exe().ok()?.parent().map(PathBuf::from))
+}
+
+/// Ablageorte für die Sicherung vor einem Update, in dieser Reihenfolge:
+/// neben der installierten Programmdatei (dort ist sie ohne laufende App
+/// auffindbar) und – falls das nicht geht – im Backup-Ordner der App-Daten,
+/// wo auch die täglichen Sicherungen liegen. Der zweite Ort ist immer dabei,
+/// damit ein Update nie an fehlenden Schreibrechten scheitert.
+fn update_backup_targets(
+    install_dir: Option<PathBuf>,
+    data_backups_dir: &Path,
+) -> Vec<backup::UpdateBackupTarget> {
+    let mut targets = Vec::new();
+    if let Some(install_dir) = install_dir.filter(|dir| !is_system_location(dir)) {
+        targets.push(backup::UpdateBackupTarget::next_to_installation(
+            &install_dir,
+        ));
+    }
+    let app_data = backup::UpdateBackupTarget::app_data(data_backups_dir);
+    if !targets.iter().any(|target| target.dir == app_data.dir) {
+        targets.push(app_data);
+    }
+    targets
 }
 
 fn require_key(state: &VaultState) -> Result<SecretKey, ApiError> {
@@ -481,6 +539,9 @@ pub struct BackupResult {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateBackupResult {
     pub path: String,
+    /// false, wenn die Sicherung nicht neben der Installation, sondern im
+    /// Datenordner der App gelandet ist (z. B. Linux-Paketinstallation).
+    pub next_to_installation: bool,
 }
 
 #[derive(Serialize)]
@@ -608,14 +669,17 @@ pub fn create_daily_backup(
     })
 }
 
-/// Erstellt unmittelbar vor einem Update eine vollständige Sicherung im
-/// Ordner `Backups` neben der laufenden EXE. Jeder Fehler wird an das
-/// Frontend weitergegeben und verhindert dadurch die Update-Installation.
+/// Erstellt unmittelbar vor einem Update eine vollständige Sicherung: bevorzugt
+/// im Ordner `Backups` neben der laufenden Programmdatei, sonst im Backup-Ordner
+/// der App-Daten. Lässt sich an keinem der Orte eine vollständige Sicherung
+/// schreiben, meldet der Command einen Fehler und verhindert dadurch die
+/// Update-Installation.
 #[tauri::command]
 pub fn create_update_backup(
     target_version: String,
     vault: State<'_, Vault>,
     db: State<'_, Db>,
+    paths: State<'_, StoragePaths>,
 ) -> Result<UpdateBackupResult, ApiError> {
     if target_version.trim().is_empty() || target_version.len() > 64 {
         return Err(ApiError::validation(
@@ -624,11 +688,7 @@ pub fn create_update_backup(
         ));
     }
 
-    let install_dir = std::env::current_exe()
-        .map_err(|_| ApiError::backup("Der Installationsordner konnte nicht ermittelt werden"))?
-        .parent()
-        .map(PathBuf::from)
-        .ok_or_else(|| ApiError::backup("Der Installationsordner konnte nicht ermittelt werden"))?;
+    let targets = update_backup_targets(installation_dir(), &paths.backups_dir);
 
     let keys = {
         let state = vault.lock()?;
@@ -645,18 +705,19 @@ pub fn create_update_backup(
             }
         }
     };
-    let path = {
+    let result = {
         let state = db.lock()?;
         backup::write_update_backup(
             state.conn()?,
             &keys,
-            &install_dir,
+            &targets,
             env!("CARGO_PKG_VERSION"),
             target_version.trim(),
         )?
     };
     Ok(UpdateBackupResult {
-        path: path.display().to_string(),
+        path: result.path.display().to_string(),
+        next_to_installation: result.next_to_installation,
     })
 }
 
@@ -836,5 +897,61 @@ mod tests {
             ErrorCode::Validation
         );
         assert_eq!(sessions.end(&a).unwrap_err().code, ErrorCode::Validation);
+    }
+
+    #[test]
+    fn update_backup_hat_immer_den_datenordner_als_rueckfallebene() {
+        let data_backups = PathBuf::from("/home/nutzer/.local/share/app/backups");
+
+        // Beschreibbarer Installationsordner: erst dorthin, dann Datenordner.
+        let install_dir = PathBuf::from("/home/nutzer/Anwendungen");
+        let targets = update_backup_targets(Some(install_dir.clone()), &data_backups);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].dir, install_dir.join("Backups"));
+        assert!(targets[0].next_to_installation);
+        assert_eq!(targets[1].dir, data_backups);
+        assert!(!targets[1].next_to_installation);
+
+        // Unbekannter Installationsort: der Datenordner bleibt übrig, damit
+        // ein Update nie ohne Sicherung dasteht.
+        let targets = update_backup_targets(None, &data_backups);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].dir, data_backups);
+        assert!(!targets[0].next_to_installation);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn systemweite_installationsorte_werden_uebersprungen() {
+        let data_backups = PathBuf::from("/home/nutzer/.local/share/app/backups");
+
+        // Paketinstallation (.deb): /usr/bin gehört root – kein Ablageort.
+        for system_dir in [
+            "/usr/bin",
+            "/usr/lib/werkstatt-motion",
+            "/opt/app",
+            "/snap/x",
+        ] {
+            let targets = update_backup_targets(Some(PathBuf::from(system_dir)), &data_backups);
+            assert_eq!(targets.len(), 1, "{system_dir} darf kein Ziel sein");
+            assert_eq!(targets[0].dir, data_backups);
+        }
+
+        // Ein Ordner im Home des Nutzers (z. B. abgelegtes AppImage) zählt.
+        let targets =
+            update_backup_targets(Some(PathBuf::from("/home/nutzer/Apps")), &data_backups);
+        assert_eq!(targets.len(), 2);
+        assert!(targets[0].next_to_installation);
+    }
+
+    #[test]
+    fn doppelter_ablageort_wird_nur_einmal_versucht() {
+        // Portable Installation, deren Datenordner derselbe ist.
+        let install_dir = PathBuf::from("/media/stick/werkstatt");
+        let data_backups = install_dir.join("Backups");
+        let targets = update_backup_targets(Some(install_dir), &data_backups);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].dir, data_backups);
+        assert!(targets[0].next_to_installation);
     }
 }

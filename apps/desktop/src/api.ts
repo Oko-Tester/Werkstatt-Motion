@@ -201,6 +201,8 @@ export interface BackupResult {
 
 export interface UpdateBackupResult {
   path: string;
+  /** false, wenn die Sicherung im Datenordner statt neben der Installation liegt. */
+  nextToInstallation: boolean;
 }
 
 export interface DailyBackupResult {
@@ -227,7 +229,10 @@ export function createDailyBackup(): Promise<DailyBackupResult> {
   return invoke("create_daily_backup");
 }
 
-/** Sichert die Daten vor einem Update neben der installierten Programmdatei. */
+/**
+ * Sichert die Daten vor einem Update – bevorzugt neben der installierten
+ * Programmdatei, sonst im Backup-Ordner der App-Daten.
+ */
 export function createUpdateBackup(targetVersion: string): Promise<UpdateBackupResult> {
   return invoke("create_update_backup", { targetVersion });
 }

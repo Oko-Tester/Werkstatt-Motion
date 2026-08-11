@@ -842,6 +842,7 @@ export function installFakeBackend(seed?: {
           path: `/installation/Backups/vor-update-1.0.0-auf-${String(
             args.targetVersion,
           )}.werkstattbackup`,
+          nextToInstallation: true,
         };
       }
       case "prepare_restore": {
