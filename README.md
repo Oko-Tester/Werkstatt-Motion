@@ -82,11 +82,37 @@ erscheint sofort.
 
 ## Installation
 
+### Windows
+
 1. Die Installationsdatei auf den Werkstatt-PC kopieren.
 2. Die Datei doppelt anklicken und die Installation bestätigen.
 3. **Werkstatt Motion** über das Startmenü öffnen.
 
 Es werden keine zusätzlichen Programme und keine Anmeldung benötigt.
+
+### Linux
+
+Für Ubuntu, Debian, Linux Mint und verwandte Distributionen im neuesten
+[GitHub Release](https://github.com/Oko-Tester/Werkstatt-Motion/releases/latest)
+die Datei mit der Endung `.deb` herunterladen. Anschließend die Datei über die
+Softwareverwaltung öffnen oder im Download-Ordner installieren:
+
+```bash
+sudo apt install ./*.deb
+```
+
+Danach lässt sich **Werkstatt Motion** wie andere Anwendungen über das
+Anwendungsmenü starten.
+
+Alternativ steht im Release ein `.AppImage` für weitere Linux-Distributionen
+bereit. Nach dem Download muss es einmal ausführbar gemacht werden:
+
+```bash
+chmod +x ./*.AppImage
+./*.AppImage
+```
+
+Die bereitgestellten Linux-Pakete sind für 64-Bit-PCs (`x86_64`) vorgesehen.
 
 ## Updates
 
@@ -111,27 +137,25 @@ aufbewahren.
 
 ### Daten nach einem Update wiederherstellen
 
-Die automatische Sicherung liegt im Ordner **„Backups“** neben der installierten
-App. Der Standardpfad unter Windows lautet:
+Die automatische Sicherung liegt im Anwendungsdatenverzeichnis. Die
+Standardpfade lauten:
 
 ```text
-%LOCALAPPDATA%\Werkstatt Motion\Backups
+Windows: %APPDATA%\de.werkstattmotion.desktop\backups
+Linux:   ~/.local/share/de.werkstattmotion.desktop/backups
 ```
+
+Unter Linux kann `$XDG_DATA_HOME` den Ordner `~/.local/share` ersetzen.
 
 So lässt sich die Sicherung öffnen und wieder einspielen:
 
-1. **Windows-Taste + R** drücken.
-2. `%LOCALAPPDATA%\Werkstatt Motion\Backups` eingeben und mit **Enter**
-   bestätigen.
-3. Die neueste Datei auswählen, deren Name mit `vor-update-` beginnt und auf
+1. Den oben genannten Ordner im Dateimanager öffnen.
+2. Die neueste Datei auswählen, deren Name mit `vor-update-` beginnt und auf
    `.werkstattbackup` endet.
-4. Werkstatt Motion öffnen und im Drei-Punkte-Menü auf
+3. Werkstatt Motion öffnen und im Drei-Punkte-Menü auf
    **„Wiederherstellen“** klicken.
-5. Die Backup-Datei aus dem Ordner auswählen und
+4. Die Backup-Datei aus dem Ordner auswählen und
    **„Jetzt wiederherstellen“** bestätigen.
-
-Falls Werkstatt Motion in einen anderen Ordner installiert wurde, befindet sich
-der Ordner **„Backups“** direkt neben der Datei `werkstatt-motion.exe`.
 
 ## Lizenz
 

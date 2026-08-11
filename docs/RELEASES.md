@@ -1,6 +1,7 @@
 # Releases veröffentlichen
 
-Werkstatt Motion veröffentlicht signierte Windows-Updates über GitHub Releases.
+Werkstatt Motion veröffentlicht signierte Windows- und Linux-Updates über
+GitHub Releases.
 Ein vollständiger Release-Entwurf entsteht automatisch, sobald ein passender
 Versions-Tag gepusht wird. Der Entwurf wird erst nach der Kontrolle seiner
 Dateien manuell veröffentlicht, damit unveränderliche Releases vollständig
@@ -32,18 +33,24 @@ Updates mehr verifizieren.
 3. Einen zur Version passenden, bisher unbenutzten Tag pushen:
 
 ```powershell
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.1.2
+git push origin v1.1.2
 ```
 
-Die GitHub Action baut anschließend den NSIS-Installer, die Update-Signatur und
-`latest.json` und lädt sie gemeinsam in einen Release-Entwurf. Der Tag muss
-exakt zur Version aus `tauri.conf.json` passen.
+Die GitHub Action baut anschließend parallel den Windows-Installer sowie die
+Linux-Pakete, erzeugt die Update-Signaturen und führt alle Plattformen in
+`latest.json` zusammen. Sämtliche Dateien werden gemeinsam in einen
+Release-Entwurf geladen. Der Tag muss exakt zur Version aus `tauri.conf.json`
+passen.
 
 4. Nach erfolgreicher Action unter **Releases → Drafts** kontrollieren, dass
    mindestens diese Dateien enthalten sind:
    - `Werkstatt Motion_<Version>_x64-setup.exe`
    - `Werkstatt Motion_<Version>_x64-setup.exe.sig`
+   - `Werkstatt Motion_<Version>_amd64.deb`
+   - `Werkstatt Motion_<Version>_amd64.deb.sig`
+   - `Werkstatt Motion_<Version>_amd64.AppImage`
+   - `Werkstatt Motion_<Version>_amd64.AppImage.sig`
    - `latest.json`
 5. Erst danach **Publish release** auswählen. Mit aktivierter Release-
    Unveränderlichkeit können Dateien nach diesem Schritt nicht mehr ergänzt,

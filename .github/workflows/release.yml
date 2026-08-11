@@ -1,4 +1,4 @@
-name: Windows-Release
+name: Desktop-Release
 
 on:
   push:
@@ -10,11 +10,29 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            platform: windows-latest
+          - name: Linux x64
+            platform: ubuntu-22.04
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Repository auschecken
         uses: actions/checkout@v4
+
+      # Ubuntu 22.04 ist bewusst die Linux-Basis: Dadurch bleiben die Pakete
+      # mit möglichst vielen aktuellen Debian-/Ubuntu-Systemen kompatibel.
+      - name: Linux-Systemabhängigkeiten installieren
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: pnpm einrichten
         uses: pnpm/action-setup@v4
@@ -35,18 +53,13 @@ jobs:
           workspaces: apps/desktop/src-tauri -> target
 
       - name: Tag und App-Version vergleichen
-        shell: pwsh
-        run: |
-          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          if ($env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Tag $env:GITHUB_REF_NAME passt nicht zur App-Version $version"
-          }
+        run: node -e "const version = require('./apps/desktop/src-tauri/tauri.conf.json').version; const expected = 'v' + version; if (process.env.GITHUB_REF_NAME !== expected) { console.error('Tag ' + process.env.GITHUB_REF_NAME + ' passt nicht zur App-Version ' + version); process.exit(1); }"
 
       - name: Abhängigkeiten installieren
         run: pnpm install --frozen-lockfile
 
-      - name: Installer signieren und Release-Entwurf erstellen
-        uses: tauri-apps/tauri-action@v0
+      - name: Pakete signieren und Release-Entwurf erstellen
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -56,13 +69,17 @@ jobs:
           tagName: v__VERSION__
           releaseName: "Werkstatt Motion v__VERSION__"
           releaseBody: |
-            Windows-Installer für Werkstatt Motion.
+            Installationsdateien für Werkstatt Motion:
+
+            - Windows x64: `.exe`
+            - Linux x64 (Debian, Ubuntu, Linux Mint): `.deb`
+            - Linux x64 (weitere Distributionen): `.AppImage`
 
             Vor jedem automatischen Update erstellt die App ein Sicherheits-Backup
-            im Ordner `Backups` neben der installierten Programmdatei.
+            im Anwendungsdatenverzeichnis des Betriebssystems.
           # Unveränderliche GitHub-Releases dürfen nach der Veröffentlichung
           # keine neuen Assets mehr annehmen. Deshalb zuerst den vollständigen
-          # Entwurf inklusive Installer, Signatur und latest.json erzeugen.
+          # Entwurf inklusive aller Pakete, Signaturen und latest.json erzeugen.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
