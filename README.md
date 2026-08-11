@@ -61,6 +61,18 @@ Dort erscheinen dieselben Fahrzeugtermine mit Uhrzeit beziehungsweise dem
 Hinweis **„Ohne Uhrzeit“**, Kunde, Fahrzeug und Kennzeichen. Änderungen aus der
 Fahrzeugliste sind unmittelbar auch im Kalender sichtbar.
 
+Über die beiden Arbeitsansichten **„Kalender“** und **„Historie“** lässt sich
+jederzeit zwischen anstehenden Terminen und abgeschlossenen Vorgängen wechseln.
+
+![Werkstatt Motion mit Monatskalender sowie den Ansichten Kalender und Historie](docs/images/werkstatt-motion-kalender.png)
+
+### Historie öffnen
+
+Über den Button **„Historie“** werden abgeschlossene Fahrzeuge als
+unveränderliche Snapshots angezeigt. Zusätzlich sind dort bereits bezahlte
+Kosten mit Fahrzeug, Kennzeichen, Betrag und Zahlungszeitpunkt zu finden. Das
+Suchfeld filtert beide Bereiche gemeinsam.
+
 ### Offene Zahlung eintragen
 
 Im Bereich **„Offene Zahlungen“** auf **„+ Offener Betrag“** klicken. Sobald
