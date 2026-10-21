@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -21,8 +22,17 @@ pub const BACKUP_FORMAT: &str = "werkstatt-backup";
 pub const BACKUP_FORMAT_VERSION: i64 = 1;
 pub const BACKUP_FILE_EXTENSION: &str = "werkstattbackup";
 pub const DAILY_BACKUP_RETENTION_DAYS: i64 = 14;
+/// Mindestzahl täglicher Sicherungen, die nie gelöscht werden – auch dann nicht,
+/// wenn sie älter als das Aufbewahrungsfenster sind. Nach einer längeren Pause
+/// (Urlaub, defekter Rechner) bleibt so die letzte gute Sicherung davor erhalten,
+/// statt dass der erste Lauf danach alles Ältere wegräumt.
+const MIN_KEPT_DAILY_BACKUPS: usize = 3;
 
 const DAILY_BACKUP_PREFIX: &str = "taeglich-";
+const MANUAL_BACKUP_PREFIX: &str = "manuell-";
+
+/// Dateiname der Backup-Einstellungen im App-Datenordner, neben der Datenbank.
+pub const BACKUP_SETTINGS_FILE: &str = "sicherung.json";
 
 const KEY_RECOVERY_KDF: &str = "hkdf-sha256";
 const KEY_RECOVERY_AAD: &[u8] = b"werkstatt-backup-key-recovery-v1";
@@ -115,13 +125,26 @@ fn write_file_complete(path: &Path, bytes: &[u8]) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Legt den Zielordner an und schreibt die Backup-Datei atomar hinein:
-/// erst vollständig unter temporärem Namen, dann umbenennen. Schlägt
-/// irgendetwas davon fehl, bleibt kein halbes Backup zurück.
+/// Zähler für eindeutige temporäre Dateinamen. Läuft die Sicherung in den
+/// zweiten Ordner zweimal gleichzeitig, darf keiner der Läufe die halbe Datei
+/// des anderen überschreiben oder umbenennen.
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Legt den Zielordner an und schreibt die Backup-Datei atomar hinein.
 fn write_backup_file(dir: &Path, file_name: &str, bytes: &[u8]) -> Result<PathBuf, ApiError> {
     std::fs::create_dir_all(dir).map_err(|_| io_error())?;
+    write_file_atomically(dir, file_name, bytes)
+}
+
+/// Schreibt die Backup-Datei atomar in einen schon vorhandenen Ordner: erst
+/// vollständig unter temporärem Namen, dann umbenennen. Schlägt irgendetwas
+/// davon fehl, bleibt kein halbes Backup zurück. Der Ordner wird nie angelegt –
+/// so entsteht der zweite Sicherungsordner nie versehentlich auf einem anderen
+/// Laufwerk.
+fn write_file_atomically(dir: &Path, file_name: &str, bytes: &[u8]) -> Result<PathBuf, ApiError> {
     let path = dir.join(file_name);
-    let temporary = dir.join(format!(".{file_name}.tmp"));
+    let unique = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temporary = dir.join(format!(".{file_name}.{}-{unique}.tmp", std::process::id()));
 
     if let Err(err) = write_file_complete(&temporary, bytes) {
         let _ = std::fs::remove_file(&temporary);
@@ -388,6 +411,7 @@ pub fn write_safety_backup(
 
 /// Ergebnis des täglichen Backup-Laufs. Existiert für den heutigen
 /// Kalendertag bereits eine Sicherung, bleibt `created` false.
+#[derive(Debug)]
 pub struct DailyBackupResult {
     pub created: bool,
     pub path: PathBuf,
@@ -409,27 +433,37 @@ fn daily_backup_date(file_name: &str) -> Option<&str> {
 }
 
 /// Entfernt ausschließlich tägliche Sicherungen, die außerhalb des
-/// Aufbewahrungsfensters liegen. Andere automatische und manuelle Backups
-/// werden bewusst nicht angefasst.
-fn cleanup_daily_backups(backups_dir: &Path, cutoff_date: &str) -> Result<(), ApiError> {
-    let entries = std::fs::read_dir(backups_dir).map_err(|_| io_error())?;
-    for entry in entries {
-        let entry = entry.map_err(|_| io_error())?;
-        let file_name = entry.file_name();
-        let Some(file_name) = file_name.to_str() else {
-            continue;
-        };
-        let Some(date) = daily_backup_date(file_name) else {
-            continue;
-        };
-        if date < cutoff_date {
-            std::fs::remove_file(entry.path()).map_err(|_| io_error())?;
+/// Aufbewahrungsfensters liegen – die `MIN_KEPT_DAILY_BACKUPS` neuesten bleiben
+/// aber in jedem Fall. Andere automatische und manuelle Backups werden bewusst
+/// nicht angefasst. Das Aufräumen ist Nebensache: Eine Datei, die gerade nicht
+/// zu löschen ist (z. B. vom Virenscanner gehalten), macht eine fertige
+/// Sicherung nicht zum Fehler und hält die zweite Kopie nicht auf.
+fn cleanup_daily_backups(backups_dir: &Path, cutoff_date: &str) {
+    let Ok(entries) = std::fs::read_dir(backups_dir) else {
+        return;
+    };
+    let mut dailies: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let file_name = entry.file_name();
+            let date = daily_backup_date(file_name.to_str()?)?.to_string();
+            Some((date, entry.path()))
+        })
+        .collect();
+    // Neueste zuerst: Die ersten `MIN_KEPT_DAILY_BACKUPS` sind geschützt.
+    dailies.sort_by(|a, b| b.0.cmp(&a.0));
+    for (date, path) in dailies.into_iter().skip(MIN_KEPT_DAILY_BACKUPS) {
+        if date.as_str() < cutoff_date {
+            let _ = std::fs::remove_file(path);
         }
     }
-    Ok(())
 }
 
-fn write_daily_backup_for_dates(
+/// Erstellt höchstens ein Backup pro Kalendertag (`today`) und bewahrt nur das
+/// Fenster ab `cutoff_date` auf. Die Tage kommen von außen (`daily_dates`),
+/// damit die Kopie in den zweiten Ordner garantiert dieselben benutzt – auch
+/// wenn währenddessen Mitternacht vergeht.
+pub fn write_daily_backup_for_dates(
     conn: &Connection,
     keys: &KeyMaterial,
     backups_dir: &Path,
@@ -456,24 +490,284 @@ fn write_daily_backup_for_dates(
         true
     };
 
-    cleanup_daily_backups(backups_dir, cutoff_date)?;
+    cleanup_daily_backups(backups_dir, cutoff_date);
     Ok(DailyBackupResult { created, path })
 }
 
-/// Erstellt höchstens ein Backup pro lokalem Kalendertag und bewahrt nur das
-/// aktuelle 14-Tage-Fenster auf. Die Datumsberechnung läuft über SQLite und
+/// Die Kalendertage der täglichen Sicherung: heute und der erste Tag, der noch
+/// aufbewahrt wird (14-Tage-Fenster). Die Berechnung läuft über SQLite und
 /// richtet sich nach dem lokalen Kalendertag des Betriebssystems.
-pub fn ensure_daily_backup(
-    conn: &Connection,
-    keys: &KeyMaterial,
-    backups_dir: &Path,
-) -> Result<DailyBackupResult, ApiError> {
-    let (today, cutoff_date): (String, String) = conn.query_row(
+pub fn daily_dates(conn: &Connection) -> Result<(String, String), ApiError> {
+    Ok(conn.query_row(
         "SELECT date('now', 'localtime'), date('now', 'localtime', ?1)",
         [format!("-{} days", DAILY_BACKUP_RETENTION_DAYS - 1)],
         |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    write_daily_backup_for_dates(conn, keys, backups_dir, &today, &cutoff_date)
+    )?)
+}
+
+// ---------- Zweiter Sicherungsordner ----------
+
+/// Einstellungen der Datensicherung. Sie liegen bewusst nicht in der Datenbank,
+/// sondern in einer kleinen Datei daneben: Der Ordner gehört zu diesem Computer
+/// (ein USB-Stick hat anderswo einen anderen Laufwerksbuchstaben), und eine
+/// Wiederherstellung darf ihn weder überschreiben noch zurückdrehen.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BackupSettings {
+    /// Zweiter Speicherort für die automatische Sicherung (USB-Stick, Netzlaufwerk):
+    /// der Ordner, den die App beim Einrichten selbst angelegt hat und allein
+    /// verwaltet – nicht der Ordner, den man im Dialog gewählt hat.
+    pub second_dir: Option<String>,
+}
+
+/// Grundname des Ordners, den die App im gewählten Ordner anlegt. Nur in ihm
+/// schreibt und räumt sie auf; was sonst im gewählten Ordner liegt, bleibt
+/// unberührt.
+const SECOND_FOLDER_BASE_NAME: &str = "Werkstatt-Motion-Sicherung";
+
+/// Name des eigenen Ordners im zweiten Speicherort. Mit dem Computernamen, damit
+/// sich zwei Rechner denselben Stick oder dieselbe Freigabe teilen können, ohne
+/// sich gegenseitig zu überschreiben oder aufzuräumen.
+pub fn second_folder_name() -> String {
+    let computer = ["COMPUTERNAME", "HOSTNAME"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok())
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|name| file_name_part(name.trim()))
+        .filter(|name| !name.is_empty());
+    match computer {
+        Some(name) => format!("{SECOND_FOLDER_BASE_NAME}-{name}"),
+        None => SECOND_FOLDER_BASE_NAME.to_string(),
+    }
+}
+
+const SECOND_DIR_UNREACHABLE: &str = "Der zweite Sicherungsordner ist nicht erreichbar. \
+     Ist der USB-Stick eingesteckt oder das Netzlaufwerk verbunden?";
+
+/// Liest die Einstellungen. Fehlt die Datei oder ist sie unlesbar, gelten die
+/// Standardwerte: Die Sicherung darf nie an einer kaputten Einstellung scheitern.
+pub fn load_backup_settings(path: &Path) -> BackupSettings {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn save_backup_settings(path: &Path, settings: &BackupSettings) -> Result<(), ApiError> {
+    let failed = || ApiError::backup("Die Einstellung konnte nicht gespeichert werden");
+    let dir = path.parent().ok_or_else(failed)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(failed)?;
+    let bytes = serde_json::to_vec_pretty(settings).map_err(|_| failed())?;
+    write_backup_file(dir, file_name, &bytes)
+        .map(|_| ())
+        .map_err(|_| failed())
+}
+
+/// Liegt `path` in `base` oder ist es `base` selbst? Verglichen werden die
+/// aufgelösten Pfade; lässt sich einer nicht auflösen, gilt der Pfad wie er ist.
+fn is_same_or_inside(path: &Path, base: &Path) -> bool {
+    match (path.canonicalize(), base.canonicalize()) {
+        (Ok(path), Ok(base)) => path.starts_with(base),
+        _ => path.starts_with(base),
+    }
+}
+
+/// Richtet den zweiten Speicherort im gewählten Ordner ein: Der Ordner muss
+/// erreichbar und beschreibbar sein und außerhalb der Daten dieser App liegen.
+/// Die App legt darin einen eigenen Ordner (`folder_name`) an – das ist die
+/// einzige Stelle, an der sie je einen Ordner im zweiten Speicherort anlegt –
+/// und merkt sich diesen. Dadurch bleibt alles andere im gewählten Ordner
+/// unberührt, und ein anderer Stick unter demselben Laufwerksbuchstaben (oder
+/// ein leerer Einhängepunkt) wird später als „nicht erreichbar“ erkannt.
+pub fn set_second_dir(
+    settings_path: &Path,
+    local_backups_dir: &Path,
+    picked: &Path,
+    folder_name: &str,
+) -> Result<(), ApiError> {
+    if !picked.is_dir() {
+        return Err(ApiError::backup(SECOND_DIR_UNREACHABLE));
+    }
+    let own_data = [Some(local_backups_dir), settings_path.parent()];
+    if own_data
+        .into_iter()
+        .flatten()
+        .any(|own| is_same_or_inside(picked, own))
+    {
+        return Err(ApiError::backup(
+            "Bitte einen anderen Ordner wählen: Dieser gehört zu den Daten \
+             der App und liegt nicht getrennt von ihnen",
+        ));
+    }
+
+    // Wurde der eigene Ordner direkt gewählt, wird er benutzt statt darin einen
+    // zweiten anzulegen.
+    let already_own = picked
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(folder_name));
+    let target = if already_own {
+        picked.to_path_buf()
+    } else {
+        picked.join(folder_name)
+    };
+    let not_writable = || ApiError::backup("In diesen Ordner kann nicht geschrieben werden");
+    match std::fs::create_dir(&target) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && target.is_dir() => {}
+        Err(_) => return Err(not_writable()),
+    }
+    let probe = target.join(".werkstatt-schreibtest");
+    std::fs::write(&probe, b"ok").map_err(|_| not_writable())?;
+    let _ = std::fs::remove_file(&probe);
+
+    save_backup_settings(
+        settings_path,
+        &BackupSettings {
+            second_dir: Some(target.display().to_string()),
+        },
+    )
+}
+
+/// Entfernt den zweiten Speicherort. Bereits kopierte Sicherungen bleiben dort
+/// liegen.
+pub fn clear_second_dir(settings_path: &Path) -> Result<(), ApiError> {
+    save_backup_settings(settings_path, &BackupSettings::default())
+}
+
+/// Übernimmt den Änderungszeitpunkt der Quelle in die Kopie. So zeigt „Zuletzt
+/// gesichert“ am zweiten Ort das Alter der Daten und nicht den Moment des
+/// Kopierens (der Stick kann erst nachmittags eingesteckt worden sein). Gelingt
+/// es nicht, bleibt es beim Zeitpunkt des Kopierens.
+fn copy_modified_time(source: &Path, target: &Path) {
+    let Ok(modified) = std::fs::metadata(source).and_then(|meta| meta.modified()) else {
+        return;
+    };
+    if let Ok(file) = std::fs::OpenOptions::new().write(true).open(target) {
+        let _ = file.set_modified(modified);
+    }
+}
+
+/// Kopiert die heutige Tagessicherung in den eigenen Ordner im zweiten
+/// Speicherort und räumt dort – wie auf diesem Computer – tägliche Sicherungen
+/// außerhalb der 14 Tage weg. Manuelle Sicherungen und fremde Dateien bleiben
+/// unberührt. Der Ordner wird nie angelegt: Fehlt er (z. B. USB-Stick nicht
+/// eingesteckt), gibt es einen klaren Fehler, statt dass auf dem falschen
+/// Laufwerk ein neuer Ordner entsteht.
+pub fn mirror_daily_backup(
+    source: &Path,
+    second_dir: &Path,
+    today: &str,
+    cutoff_date: &str,
+) -> Result<DailyBackupResult, ApiError> {
+    if !is_calendar_date(today) || !is_calendar_date(cutoff_date) {
+        return Err(ApiError::backup(
+            "Backup-Datum konnte nicht ermittelt werden",
+        ));
+    }
+    if !second_dir.is_dir() {
+        return Err(ApiError::backup(SECOND_DIR_UNREACHABLE));
+    }
+
+    let file_name = format!("{DAILY_BACKUP_PREFIX}{today}.{BACKUP_FILE_EXTENSION}");
+    let path = second_dir.join(&file_name);
+    let created = if path.is_file() {
+        false
+    } else {
+        let bytes = std::fs::read(source).map_err(|_| io_error())?;
+        write_file_atomically(second_dir, &file_name, &bytes).map_err(|_| {
+            ApiError::backup("Die zweite Sicherung konnte nicht geschrieben werden")
+        })?;
+        copy_modified_time(source, &path);
+        true
+    };
+
+    cleanup_daily_backups(second_dir, cutoff_date);
+    Ok(DailyBackupResult { created, path })
+}
+
+/// Zeitstempel für den Dateinamen einer manuellen Sicherung, im lokalen Kalender.
+pub fn manual_backup_stamp(conn: &Connection) -> Result<String, ApiError> {
+    Ok(conn.query_row(
+        "SELECT strftime('%Y-%m-%d_%H-%M-%S', 'now', 'localtime')",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+/// Schreibt eine fertige manuelle Sicherung mit Zeitstempel in den zweiten
+/// Ordner. Manuelle Sicherungen werden nie automatisch gelöscht. Inhalt und
+/// Zeitstempel entstehen vorher unter der Datenbanksperre; das Schreiben auf
+/// USB-Stick oder Netzlaufwerk braucht sie nicht.
+pub fn write_manual_backup(
+    second_dir: &Path,
+    stamp: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, ApiError> {
+    if !second_dir.is_dir() {
+        return Err(ApiError::backup(SECOND_DIR_UNREACHABLE));
+    }
+    let file_name = format!("{MANUAL_BACKUP_PREFIX}{stamp}.{BACKUP_FILE_EXTENSION}");
+    write_file_atomically(second_dir, &file_name, bytes)
+}
+
+/// Stand der Datensicherung für die Einstellungen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupStatus {
+    /// Ordner der automatischen Sicherung auf diesem Computer.
+    pub local_dir: String,
+    /// Zeitpunkt der letzten Tagessicherung (Millisekunden seit 1970).
+    pub local_last_at: Option<i64>,
+    pub retention_days: i64,
+    pub second_dir: Option<String>,
+    /// Zeitpunkt der letzten Sicherung im zweiten Ordner (Millisekunden seit 1970).
+    pub second_last_at: Option<i64>,
+    /// Grund, falls der zweite Ordner gerade nicht erreichbar ist.
+    pub second_error: Option<String>,
+}
+
+/// Änderungszeit der neuesten Sicherungsdatei mit einem der Namensanfänge.
+fn newest_backup_millis(dir: &Path, prefixes: &[&str]) -> Option<i64> {
+    let suffix = format!(".{BACKUP_FILE_EXTENSION}");
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.ends_with(&suffix) && prefixes.iter().any(|prefix| name.starts_with(prefix))
+        })
+        .filter_map(|entry| entry.metadata().ok()?.modified().ok())
+        .filter_map(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .max()
+}
+
+/// Liest den Stand aus den Dateien selbst: Es gibt keine zweite Buchführung, die
+/// von der Wirklichkeit abweichen könnte.
+pub fn backup_status(local_dir: &Path, settings_path: &Path) -> BackupStatus {
+    let settings = load_backup_settings(settings_path);
+    let second_path = settings.second_dir.as_deref().map(Path::new);
+    let second_error = second_path
+        .filter(|dir| !dir.is_dir())
+        .map(|_| SECOND_DIR_UNREACHABLE.to_string());
+    let second_last_at = match (second_path, &second_error) {
+        (Some(dir), None) => {
+            newest_backup_millis(dir, &[DAILY_BACKUP_PREFIX, MANUAL_BACKUP_PREFIX])
+        }
+        _ => None,
+    };
+    BackupStatus {
+        local_dir: local_dir.display().to_string(),
+        local_last_at: newest_backup_millis(local_dir, &[DAILY_BACKUP_PREFIX]),
+        retention_days: DAILY_BACKUP_RETENTION_DAYS,
+        second_dir: settings.second_dir.clone(),
+        second_last_at,
+        second_error,
+    }
 }
 
 fn file_name_part(value: &str) -> String {
@@ -797,22 +1091,66 @@ mod tests {
         let backups_dir = dir.path().join("backups");
         std::fs::create_dir_all(&backups_dir).unwrap();
 
-        let expired = backups_dir.join("taeglich-2026-07-28.werkstattbackup");
+        let expired: Vec<PathBuf> = ["26", "27", "28"]
+            .iter()
+            .map(|day| backups_dir.join(format!("taeglich-2026-07-{day}.werkstattbackup")))
+            .collect();
         let cutoff = backups_dir.join("taeglich-2026-07-29.werkstattbackup");
+        let recent_a = backups_dir.join("taeglich-2026-08-09.werkstattbackup");
+        let recent_b = backups_dir.join("taeglich-2026-08-10.werkstattbackup");
         let unrelated = backups_dir.join("vor-wiederherstellung-alt.werkstattbackup");
-        std::fs::write(&expired, b"alt").unwrap();
-        std::fs::write(&cutoff, b"behalten").unwrap();
-        std::fs::write(&unrelated, b"behalten").unwrap();
+        for file in expired
+            .iter()
+            .chain([&cutoff, &recent_a, &recent_b, &unrelated])
+        {
+            std::fs::write(file, b"alt").unwrap();
+        }
 
         let result =
             write_daily_backup_for_dates(&conn, &keys, &backups_dir, "2026-08-11", "2026-07-29")
                 .unwrap();
 
         assert!(result.created);
-        assert!(!expired.exists());
+        for file in &expired {
+            assert!(!file.exists(), "{file:?}");
+        }
         assert!(cutoff.exists());
+        assert!(recent_a.exists());
+        assert!(recent_b.exists());
         assert!(unrelated.exists());
         assert!(result.path.exists());
+    }
+
+    #[test]
+    fn die_drei_neuesten_sicherungen_bleiben_auch_nach_einer_langen_pause() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&dir.path().join("aktuell.db"));
+        let keys = test_keys();
+        let backups_dir = dir.path().join("backups");
+        std::fs::create_dir_all(&backups_dir).unwrap();
+
+        // Vier Sicherungen aus dem Juni; danach war der Rechner wochenlang aus.
+        let juni: Vec<PathBuf> = ["01", "02", "03", "04"]
+            .iter()
+            .map(|day| backups_dir.join(format!("taeglich-2026-06-{day}.werkstattbackup")))
+            .collect();
+        let update = backups_dir.join("vor-update-1.0.0-auf-1.0.1-x.werkstattbackup");
+        for file in juni.iter().chain([&update]) {
+            std::fs::write(file, b"alt").unwrap();
+        }
+
+        let result =
+            write_daily_backup_for_dates(&conn, &keys, &backups_dir, "2026-08-11", "2026-07-29")
+                .unwrap();
+
+        // Heute plus die beiden neuesten aus dem Juni bleiben, obwohl diese weit
+        // außerhalb der 14 Tage liegen; nur die älteren werden aufgeräumt.
+        assert!(result.path.exists());
+        assert!(!juni[0].exists());
+        assert!(!juni[1].exists());
+        assert!(juni[2].exists());
+        assert!(juni[3].exists());
+        assert!(update.exists());
     }
 
     #[test]
@@ -1106,5 +1444,407 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap();
         let validated = validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
         assert_eq!(validated.hidden_count, 1);
+    }
+
+    // ---------- Zweiter Sicherungsordner ----------
+
+    fn tagessicherung_fuer_test(dir: &Path) -> (Connection, KeyMaterial, DailyBackupResult) {
+        let conn = open_db(&dir.join("aktuell.db"));
+        let keys = test_keys();
+        seed(&conn, &keys);
+        let local = write_daily_backup_for_dates(
+            &conn,
+            &keys,
+            &dir.join("backups"),
+            "2026-08-11",
+            "2026-07-29",
+        )
+        .unwrap();
+        (conn, keys, local)
+    }
+
+    fn setze_aenderungszeit(path: &Path, sekunden: u64) {
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(sekunden))
+            .unwrap();
+    }
+
+    fn aenderungszeit(path: &Path) -> u64 {
+        std::fs::metadata(path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    /// Name des eigenen Ordners in den Tests.
+    const TEST_ORDNER: &str = "Werkstatt-Motion-Sicherung-TEST";
+
+    #[test]
+    fn zweiter_ordner_bekommt_die_tagessicherung_und_raeumt_nur_eigene_alte_dateien_auf() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_conn, keys, local) = tagessicherung_fuer_test(dir.path());
+        let second_dir = dir.path().join("usb-stick");
+        std::fs::create_dir_all(&second_dir).unwrap();
+        let abgelaufen = second_dir.join("taeglich-2026-07-28.werkstattbackup");
+        let grenze = second_dir.join("taeglich-2026-07-29.werkstattbackup");
+        let neu_a = second_dir.join("taeglich-2026-08-09.werkstattbackup");
+        let neu_b = second_dir.join("taeglich-2026-08-10.werkstattbackup");
+        let manuell = second_dir.join("manuell-2026-07-01_08-00-00.werkstattbackup");
+        let fremd = second_dir.join("urlaubsfotos.zip");
+        for file in [&abgelaufen, &grenze, &neu_a, &neu_b, &manuell, &fremd] {
+            std::fs::write(file, b"inhalt").unwrap();
+        }
+        // Die Tagessicherung ist schon Stunden alt, wenn der Stick eingesteckt wird.
+        setze_aenderungszeit(&local.path, 1_700_000_000);
+
+        let first =
+            mirror_daily_backup(&local.path, &second_dir, "2026-08-11", "2026-07-29").unwrap();
+
+        assert!(first.created);
+        assert_eq!(
+            first.path,
+            second_dir.join("taeglich-2026-08-11.werkstattbackup")
+        );
+        let bytes = std::fs::read(&first.path).unwrap();
+        assert_eq!(bytes, std::fs::read(&local.path).unwrap());
+        validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
+        // Die Kopie trägt das Alter der Daten, nicht den Moment des Kopierens.
+        assert_eq!(aenderungszeit(&first.path), 1_700_000_000);
+        assert!(!abgelaufen.exists());
+        assert!(grenze.exists());
+        assert!(manuell.exists());
+        assert!(fremd.exists());
+
+        // Am selben Tag gibt es nichts Neues, und es bleiben keine Reste liegen.
+        let again =
+            mirror_daily_backup(&local.path, &second_dir, "2026-08-11", "2026-07-29").unwrap();
+        assert!(!again.created);
+        let reste = std::fs::read_dir(&second_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with('.'))
+            .count();
+        assert_eq!(reste, 0);
+    }
+
+    #[test]
+    fn zweiter_ordner_behaelt_nach_einer_langen_pause_die_neuesten_sicherungen() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_conn, _keys, local) = tagessicherung_fuer_test(dir.path());
+        let second_dir = dir.path().join("usb-stick");
+        std::fs::create_dir_all(&second_dir).unwrap();
+        let juni: Vec<PathBuf> = ["01", "02", "03", "04"]
+            .iter()
+            .map(|day| second_dir.join(format!("taeglich-2026-06-{day}.werkstattbackup")))
+            .collect();
+        for file in &juni {
+            std::fs::write(file, b"alt").unwrap();
+        }
+
+        mirror_daily_backup(&local.path, &second_dir, "2026-08-11", "2026-07-29").unwrap();
+
+        // Wie auf dem Computer: Heute und die beiden neuesten älteren bleiben.
+        assert!(second_dir
+            .join("taeglich-2026-08-11.werkstattbackup")
+            .exists());
+        assert!(!juni[0].exists());
+        assert!(!juni[1].exists());
+        assert!(juni[2].exists());
+        assert!(juni[3].exists());
+    }
+
+    #[test]
+    fn zweite_sicherung_legt_einen_fehlenden_ordner_nicht_an() {
+        let dir = tempfile::tempdir().unwrap();
+        let (conn, keys, local) = tagessicherung_fuer_test(dir.path());
+        let fehlend = dir.path().join("nicht-eingesteckt").join("Sicherung");
+
+        let err =
+            mirror_daily_backup(&local.path, &fehlend, "2026-08-11", "2026-07-29").unwrap_err();
+        assert_eq!(err.code, ErrorCode::Backup);
+        assert!(err.message.contains("nicht erreichbar"));
+
+        let stamp = manual_backup_stamp(&conn).unwrap();
+        let bytes = create_backup_bytes(&conn, &keys).unwrap();
+        let err = write_manual_backup(&fehlend, &stamp, &bytes).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Backup);
+        assert!(!dir.path().join("nicht-eingesteckt").exists());
+    }
+
+    #[test]
+    fn gleichzeitige_schreibvorgaenge_in_dieselbe_datei_lassen_nichts_halbes_zurueck() {
+        const NAME: &str = "taeglich-2026-08-11.werkstattbackup";
+        let dir = tempfile::tempdir().unwrap();
+        let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+
+        let results: Vec<bool> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| write_backup_file(dir.path(), NAME, &bytes).is_ok()))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+
+        // Unter Windows kann ein gleichzeitiges Umbenennen einzelne Läufe
+        // abweisen; entscheidend ist, dass die Datei vollständig ankommt und
+        // keine temporären Reste bleiben.
+        assert!(results.iter().any(|ok| *ok));
+        assert_eq!(std::fs::read(dir.path().join(NAME)).unwrap(), bytes);
+        let reste: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name != NAME)
+            .collect();
+        assert!(reste.is_empty(), "übrig geblieben: {reste:?}");
+    }
+
+    #[test]
+    fn manuelle_sicherung_liegt_mit_zeitstempel_im_zweiten_ordner_und_ist_gueltig() {
+        let dir = tempfile::tempdir().unwrap();
+        let (conn, keys, _local) = tagessicherung_fuer_test(dir.path());
+        let second_dir = dir.path().join("usb-stick");
+        std::fs::create_dir_all(&second_dir).unwrap();
+
+        let stamp = manual_backup_stamp(&conn).unwrap();
+        let bytes = create_backup_bytes(&conn, &keys).unwrap();
+        let path = write_manual_backup(&second_dir, &stamp, &bytes).unwrap();
+
+        assert_eq!(path.parent(), Some(second_dir.as_path()));
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.starts_with("manuell-20"));
+        assert_eq!(name, format!("manuell-{stamp}.werkstattbackup"));
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains(MARKER_NAME));
+        validate_backup_bytes(&bytes, None, Some(&keys.master_key), None).unwrap();
+    }
+
+    #[test]
+    fn zweiter_ordner_wird_geprueft_und_als_eigener_unterordner_gemerkt() {
+        let data = tempfile::tempdir().unwrap();
+        let stick = tempfile::tempdir().unwrap();
+        let settings_path = data.path().join("sicherung.json");
+        let backups_dir = data.path().join("backups");
+        std::fs::create_dir_all(&backups_dir).unwrap();
+
+        assert_eq!(
+            load_backup_settings(&settings_path),
+            BackupSettings::default()
+        );
+
+        // Im gewählten Ordner entsteht der eigene Ordner, und nur der wird gemerkt.
+        set_second_dir(&settings_path, &backups_dir, stick.path(), TEST_ORDNER).unwrap();
+        let eigener = stick.path().join(TEST_ORDNER);
+        assert!(eigener.is_dir());
+        assert_eq!(
+            load_backup_settings(&settings_path).second_dir,
+            Some(eigener.display().to_string())
+        );
+        // Der Schreibtest hinterlässt nichts, und sonst bleibt der Ordner unberührt.
+        assert_eq!(std::fs::read_dir(&eigener).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(stick.path()).unwrap().count(), 1);
+
+        // Wird der eigene Ordner selbst gewählt, entsteht darin kein zweiter.
+        set_second_dir(&settings_path, &backups_dir, &eigener, TEST_ORDNER).unwrap();
+        assert_eq!(
+            load_backup_settings(&settings_path).second_dir,
+            Some(eigener.display().to_string())
+        );
+        assert_eq!(std::fs::read_dir(&eigener).unwrap().count(), 0);
+
+        // Die Daten der App sind kein zweiter Ort: der Ordner der Sicherungen,
+        // ein Unterordner davon und der Datenordner selbst.
+        let darunter = backups_dir.join("unterordner");
+        std::fs::create_dir_all(&darunter).unwrap();
+        for eigen in [backups_dir.as_path(), darunter.as_path(), data.path()] {
+            let err = set_second_dir(&settings_path, &backups_dir, eigen, TEST_ORDNER).unwrap_err();
+            assert_eq!(err.code, ErrorCode::Backup);
+            assert!(err.message.contains("anderen Ordner"), "{eigen:?}");
+        }
+        assert!(!backups_dir.join(TEST_ORDNER).exists());
+        assert!(!data.path().join(TEST_ORDNER).exists());
+
+        // Ein fehlender Ordner wird abgelehnt, die bisherige Wahl bleibt.
+        let err = set_second_dir(
+            &settings_path,
+            &backups_dir,
+            &stick.path().join("weg"),
+            TEST_ORDNER,
+        )
+        .unwrap_err();
+        assert!(err.message.contains("nicht erreichbar"));
+        assert_eq!(
+            load_backup_settings(&settings_path).second_dir,
+            Some(eigener.display().to_string())
+        );
+
+        // Entfernen vergisst den Ordner, löscht dort aber nichts.
+        std::fs::write(eigener.join("taeglich-2026-08-11.werkstattbackup"), b"x").unwrap();
+        clear_second_dir(&settings_path).unwrap();
+        assert_eq!(load_backup_settings(&settings_path).second_dir, None);
+        assert!(eigener.join("taeglich-2026-08-11.werkstattbackup").exists());
+    }
+
+    #[test]
+    fn dateien_im_gewaehlten_ordner_bleiben_unberuehrt() {
+        let data = tempfile::tempdir().unwrap();
+        let stick = tempfile::tempdir().unwrap();
+        let (_conn, _keys, local) = tagessicherung_fuer_test(data.path());
+        let settings_path = data.path().join("sicherung.json");
+        // Auf dem Stick liegen schon alte Kopien, z. B. von Hand dorthin kopiert.
+        let alt = stick.path().join("taeglich-2026-01-05.werkstattbackup");
+        let urlaub = stick.path().join("urlaubsfotos.zip");
+        std::fs::write(&alt, b"von Hand kopiert").unwrap();
+        std::fs::write(&urlaub, b"fotos").unwrap();
+
+        set_second_dir(
+            &settings_path,
+            &data.path().join("backups"),
+            stick.path(),
+            TEST_ORDNER,
+        )
+        .unwrap();
+        let eigener = PathBuf::from(load_backup_settings(&settings_path).second_dir.unwrap());
+        mirror_daily_backup(&local.path, &eigener, "2026-08-11", "2026-07-29").unwrap();
+
+        // Aufgeräumt wird nur im eigenen Ordner.
+        assert!(alt.exists());
+        assert!(urlaub.exists());
+        assert!(eigener.join("taeglich-2026-08-11.werkstattbackup").exists());
+    }
+
+    #[test]
+    fn ein_anderer_stick_am_selben_ort_wird_nicht_beschrieben() {
+        let data = tempfile::tempdir().unwrap();
+        let stick = tempfile::tempdir().unwrap();
+        let (conn, keys, local) = tagessicherung_fuer_test(data.path());
+        let settings_path = data.path().join("sicherung.json");
+        let backups_dir = data.path().join("backups");
+        set_second_dir(&settings_path, &backups_dir, stick.path(), TEST_ORDNER).unwrap();
+        let eigener = stick.path().join(TEST_ORDNER);
+
+        // Der Laufwerksbuchstabe (oder der Einhängepunkt) existiert noch, aber
+        // der eigene Ordner ist weg: Es steckt ein anderer Datenträger darin.
+        std::fs::remove_dir_all(&eigener).unwrap();
+
+        let err =
+            mirror_daily_backup(&local.path, &eigener, "2026-08-11", "2026-07-29").unwrap_err();
+        assert!(err.message.contains("nicht erreichbar"));
+        let stamp = manual_backup_stamp(&conn).unwrap();
+        let bytes = create_backup_bytes(&conn, &keys).unwrap();
+        assert!(write_manual_backup(&eigener, &stamp, &bytes).is_err());
+        assert!(backup_status(&backups_dir, &settings_path)
+            .second_error
+            .unwrap()
+            .contains("nicht erreichbar"));
+        assert!(!eigener.exists());
+        assert_eq!(std::fs::read_dir(stick.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn aufraeumen_haelt_eine_fertige_sicherung_nicht_auf() {
+        let dir = tempfile::tempdir().unwrap();
+        let (conn, keys, local) = tagessicherung_fuer_test(dir.path());
+        let second_dir = dir.path().join("usb-stick");
+        std::fs::create_dir_all(&second_dir).unwrap();
+        // Ein Eintrag mit dem Namen einer abgelaufenen Sicherung, der sich nicht
+        // wie eine Datei löschen lässt (steht hier für eine gesperrte Datei).
+        std::fs::create_dir_all(second_dir.join("taeglich-2026-07-01.werkstattbackup")).unwrap();
+        let backups_dir = dir.path().join("backups");
+        std::fs::create_dir_all(backups_dir.join("taeglich-2026-07-02.werkstattbackup")).unwrap();
+
+        let kopie =
+            mirror_daily_backup(&local.path, &second_dir, "2026-08-11", "2026-07-29").unwrap();
+        assert!(kopie.created);
+        assert!(kopie.path.is_file());
+
+        // Auch lokal bleibt die fertige Sicherung ein Erfolg, und die Kopie läuft weiter.
+        let lokal =
+            write_daily_backup_for_dates(&conn, &keys, &backups_dir, "2026-08-12", "2026-07-30")
+                .unwrap();
+        assert!(lokal.created);
+        assert!(lokal.path.is_file());
+    }
+
+    #[test]
+    fn eigener_ordnername_enthaelt_keine_pfadzeichen() {
+        let name = second_folder_name();
+        assert!(name.starts_with(SECOND_FOLDER_BASE_NAME));
+        assert!(!name.contains(['/', '\\', ':']), "{name}");
+        assert!(name.len() <= SECOND_FOLDER_BASE_NAME.len() + 1 + 64);
+    }
+
+    #[test]
+    fn defekte_einstellungsdatei_faellt_auf_die_standardwerte_zurueck() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sicherung.json");
+        assert_eq!(load_backup_settings(&path), BackupSettings::default());
+
+        std::fs::write(&path, b"{ kaputt").unwrap();
+        assert_eq!(load_backup_settings(&path), BackupSettings::default());
+
+        // Unbekannte Felder aus einer neueren Version stören nicht.
+        std::fs::write(&path, br#"{"secondDir":"E:\\Sicherung","neu":true}"#).unwrap();
+        assert_eq!(
+            load_backup_settings(&path).second_dir.as_deref(),
+            Some("E:\\Sicherung")
+        );
+    }
+
+    #[test]
+    fn status_zeigt_die_letzten_sicherungen_und_einen_nicht_erreichbaren_ordner() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("sicherung.json");
+        let local = dir.path().join("backups");
+        std::fs::create_dir_all(&local).unwrap();
+
+        // Ohne Sicherungen und ohne zweiten Ort.
+        let leer = backup_status(&local, &settings_path);
+        assert_eq!(leer.local_last_at, None);
+        assert_eq!(leer.second_dir, None);
+        assert_eq!(leer.second_error, None);
+        assert_eq!(leer.retention_days, DAILY_BACKUP_RETENTION_DAYS);
+
+        // Die neueste Tagessicherung zählt; andere Dateien (hier vor-update) nicht.
+        let alt = local.join("taeglich-2026-08-10.werkstattbackup");
+        let neu = local.join("taeglich-2026-08-11.werkstattbackup");
+        let update = local.join("vor-update-1.0.0-auf-1.0.1-x.werkstattbackup");
+        for file in [&alt, &neu, &update] {
+            std::fs::write(file, b"x").unwrap();
+        }
+        setze_aenderungszeit(&alt, 1_000_000);
+        setze_aenderungszeit(&neu, 2_000_000);
+        setze_aenderungszeit(&update, 3_000_000);
+        assert_eq!(
+            backup_status(&local, &settings_path).local_last_at,
+            Some(2_000_000_000)
+        );
+
+        // Zweiter Ort, der gerade fehlt (USB-Stick nicht eingesteckt).
+        let stick = tempfile::tempdir().unwrap();
+        set_second_dir(&settings_path, &local, stick.path(), TEST_ORDNER).unwrap();
+        let usb = stick.path().join(TEST_ORDNER);
+        std::fs::remove_dir_all(&usb).unwrap();
+        let getrennt = backup_status(&local, &settings_path);
+        assert_eq!(getrennt.second_dir, Some(usb.display().to_string()));
+        assert_eq!(getrennt.second_last_at, None);
+        assert!(getrennt.second_error.unwrap().contains("nicht erreichbar"));
+
+        // Wieder eingesteckt: Tages- und manuelle Sicherungen zählen, die neueste gewinnt.
+        std::fs::create_dir_all(&usb).unwrap();
+        let tag = usb.join("taeglich-2026-08-11.werkstattbackup");
+        let manuell = usb.join("manuell-2026-08-11_16-30-00.werkstattbackup");
+        std::fs::write(&tag, b"x").unwrap();
+        std::fs::write(&manuell, b"x").unwrap();
+        setze_aenderungszeit(&tag, 4_000_000);
+        setze_aenderungszeit(&manuell, 5_000_000);
+        let da = backup_status(&local, &settings_path);
+        assert_eq!(da.second_error, None);
+        assert_eq!(da.second_last_at, Some(5_000_000_000));
     }
 }

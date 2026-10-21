@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
-use crate::backup::{self, ValidatedBackup, BACKUP_FILE_EXTENSION};
+use crate::backup::{self, BackupStatus, ValidatedBackup, BACKUP_FILE_EXTENSION};
 use crate::crypto::{self, SecretKey};
 use crate::db;
 use crate::error::ApiError;
@@ -138,6 +138,8 @@ impl SecretSessions {
 pub struct StoragePaths {
     pub db_path: PathBuf,
     pub backups_dir: PathBuf,
+    /// Backup-Einstellungen (zweiter Speicherort), neben der Datenbank.
+    pub settings_path: PathBuf,
 }
 
 /// Ordner der installierten Programmdatei. Bei einem AppImage zeigt
@@ -544,11 +546,24 @@ pub struct UpdateBackupResult {
     pub next_to_installation: bool,
 }
 
+/// Ergebnis der Kopie in den zweiten Speicherort.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecondBackupOutcome {
+    /// true, wenn heute eine neue Kopie geschrieben wurde.
+    pub created: bool,
+    pub path: Option<String>,
+    /// Grund, falls der zweite Ordner gerade nicht erreichbar ist.
+    pub error: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyBackupResult {
     pub created: bool,
     pub path: String,
+    /// `None`, wenn kein zweiter Speicherort eingerichtet ist.
+    pub second: Option<SecondBackupOutcome>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -636,36 +651,149 @@ pub async fn create_backup(
     })
 }
 
-/// Erstellt bei Bedarf die heutige automatische Sicherung und entfernt
-/// tägliche Backups außerhalb des 14-Tage-Aufbewahrungsfensters.
+/// Klont das Schlüsselmaterial, damit während langsamer Dateioperationen kein
+/// Lock gehalten wird.
+fn clone_keys(vault: &Vault) -> Result<KeyMaterial, ApiError> {
+    let state = vault.lock()?;
+    match &state.keys {
+        Some(material) => Ok(KeyMaterial {
+            master_key: material.master_key.clone(),
+            recovery_code: material.recovery_code.clone(),
+        }),
+        None => Err(state
+            .key_error
+            .clone()
+            .unwrap_or_else(ApiError::keystore_unavailable)),
+    }
+}
+
+/// Erstellt bei Bedarf die heutige automatische Sicherung, entfernt tägliche
+/// Backups außerhalb des 14-Tage-Aufbewahrungsfensters und kopiert sie – falls
+/// eingerichtet – in den zweiten Speicherort. Async, weil ein Netzlaufwerk oder
+/// USB-Stick langsam sein kann und die Oberfläche nicht darauf warten soll.
 #[tauri::command]
-pub fn create_daily_backup(
+pub async fn create_daily_backup(
     vault: State<'_, Vault>,
     db: State<'_, Db>,
     paths: State<'_, StoragePaths>,
 ) -> Result<DailyBackupResult, ApiError> {
-    let keys = {
-        let state = vault.lock()?;
-        match &state.keys {
-            Some(material) => KeyMaterial {
-                master_key: material.master_key.clone(),
-                recovery_code: material.recovery_code.clone(),
-            },
-            None => {
-                return Err(state
-                    .key_error
-                    .clone()
-                    .unwrap_or_else(ApiError::keystore_unavailable))
-            }
-        }
-    };
-    let result = {
+    let keys = clone_keys(&vault)?;
+    // Die Tage nur einmal bestimmen: Vergeht während der Sicherung Mitternacht,
+    // dürfen lokale Datei und Kopie nicht unter verschiedenen Tagen laufen.
+    let (result, today, cutoff_date) = {
         let state = db.lock()?;
-        backup::ensure_daily_backup(state.conn()?, &keys, &paths.backups_dir)?
+        let conn = state.conn()?;
+        let (today, cutoff_date) = backup::daily_dates(conn)?;
+        let result = backup::write_daily_backup_for_dates(
+            conn,
+            &keys,
+            &paths.backups_dir,
+            &today,
+            &cutoff_date,
+        )?;
+        (result, today, cutoff_date)
     };
+
+    // Der zweite Ordner gehört nicht mehr zur Datenbanksperre: Er kann langsam
+    // sein, und ein Fehler dort darf die lokale Sicherung nie entwerten.
+    let second = backup::load_backup_settings(&paths.settings_path)
+        .second_dir
+        .map(|dir| {
+            match backup::mirror_daily_backup(&result.path, Path::new(&dir), &today, &cutoff_date) {
+                Ok(mirrored) => SecondBackupOutcome {
+                    created: mirrored.created,
+                    path: Some(mirrored.path.display().to_string()),
+                    error: None,
+                },
+                Err(err) => SecondBackupOutcome {
+                    created: false,
+                    path: None,
+                    error: Some(err.message),
+                },
+            }
+        });
+
     Ok(DailyBackupResult {
         created: result.created,
         path: result.path.display().to_string(),
+        second,
+    })
+}
+
+/// Stand der Datensicherung für die Einstellungen: letzte Sicherungen und der
+/// zweite Speicherort. Async, weil das Prüfen eines Netzlaufwerks dauern kann.
+#[tauri::command]
+pub async fn get_backup_status(paths: State<'_, StoragePaths>) -> Result<BackupStatus, ApiError> {
+    Ok(backup::backup_status(
+        &paths.backups_dir,
+        &paths.settings_path,
+    ))
+}
+
+/// Lässt den zweiten Speicherort über den nativen Ordner-Dialog wählen und
+/// merkt ihn sich. Die App legt im gewählten Ordner einen eigenen Ordner an und
+/// sichert nur dort. Bricht man den Dialog ab, bleibt alles wie es war.
+#[tauri::command]
+pub async fn choose_second_backup_dir(
+    app: tauri::AppHandle,
+    paths: State<'_, StoragePaths>,
+) -> Result<BackupStatus, ApiError> {
+    if let Some(picked) = app.dialog().file().blocking_pick_folder() {
+        let dir = picked
+            .into_path()
+            .map_err(|_| ApiError::backup("Ungültiger Ordner"))?;
+        backup::set_second_dir(
+            &paths.settings_path,
+            &paths.backups_dir,
+            &dir,
+            &backup::second_folder_name(),
+        )?;
+    }
+    Ok(backup::backup_status(
+        &paths.backups_dir,
+        &paths.settings_path,
+    ))
+}
+
+/// Entfernt den zweiten Speicherort. Bereits kopierte Sicherungen bleiben dort.
+#[tauri::command]
+pub async fn clear_second_backup_dir(
+    paths: State<'_, StoragePaths>,
+) -> Result<BackupStatus, ApiError> {
+    backup::clear_second_dir(&paths.settings_path)?;
+    Ok(backup::backup_status(
+        &paths.backups_dir,
+        &paths.settings_path,
+    ))
+}
+
+/// „Jetzt sichern“: schreibt sofort eine Sicherung in den zweiten Speicherort.
+/// Ist keiner eingerichtet, fragt sie wie das Menü „Backup“ nach dem Ziel.
+#[tauri::command]
+pub async fn backup_now(
+    app: tauri::AppHandle,
+    vault: State<'_, Vault>,
+    db: State<'_, Db>,
+    paths: State<'_, StoragePaths>,
+) -> Result<BackupResult, ApiError> {
+    let Some(second_dir) = backup::load_backup_settings(&paths.settings_path).second_dir else {
+        return create_backup(app, vault, db).await;
+    };
+    let keys = clone_keys(&vault)?;
+    let (stamp, bytes) = {
+        let state = db.lock()?;
+        let conn = state.conn()?;
+        (
+            backup::manual_backup_stamp(conn)?,
+            backup::create_backup_bytes(conn, &keys)?,
+        )
+    };
+    // Wie bei der Tagessicherung läuft das Schreiben ohne Datenbanksperre: Ein
+    // langsames Laufwerk soll die übrige App nicht aufhalten.
+    let path = backup::write_manual_backup(Path::new(&second_dir), &stamp, &bytes)?;
+    Ok(BackupResult {
+        saved: true,
+        path: Some(path.display().to_string()),
     })
 }
 

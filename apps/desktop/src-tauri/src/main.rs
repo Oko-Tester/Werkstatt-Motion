@@ -88,6 +88,7 @@ fn main() {
             app.manage(StoragePaths {
                 db_path,
                 backups_dir: data_dir.join("backups"),
+                settings_path: data_dir.join(backup::BACKUP_SETTINGS_FILE),
             });
             Ok(())
         })
@@ -126,6 +127,10 @@ fn main() {
             commands::list_secret_history,
             commands::create_backup,
             commands::create_daily_backup,
+            commands::get_backup_status,
+            commands::choose_second_backup_dir,
+            commands::clear_second_backup_dir,
+            commands::backup_now,
             commands::create_update_backup,
             commands::prepare_restore,
             commands::confirm_restore,
