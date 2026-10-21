@@ -385,7 +385,7 @@ describe("App: Archivieren und Undo", () => {
     expect(snapshots).not.toBeNull();
     expect(within(snapshots as HTMLElement).getByText("VW Golf VII")).toBeInTheDocument();
     expect(within(snapshots as HTMLElement).getByText("M-AB 1234")).toBeInTheDocument();
-    await user.click(within(history).getByRole("button", { name: /Zur/ }));
+    await user.click(screen.getByRole("button", { name: "Fahrzeuge" }));
 
     await user.click(await screen.findByRole("button", { name: "Rückgängig" }));
     expect(await screen.findByDisplayValue("Müller, Anna")).toBeInTheDocument();
@@ -490,7 +490,7 @@ describe("App: Offene Zahlungen", () => {
     expect(within(costs as HTMLElement).getByText("EBE-TS 77")).toBeInTheDocument();
     expect(within(costs as HTMLElement).getByText(/486,50/)).toBeInTheDocument();
 
-    await user.click(within(history).getByRole("button", { name: /Zur/ }));
+    await user.click(screen.getByRole("button", { name: "Fahrzeuge" }));
 
     await user.click(await screen.findByRole("button", { name: "Rückgängig" }));
     expect(await screen.findByDisplayValue(/486,50/)).toBeInTheDocument();

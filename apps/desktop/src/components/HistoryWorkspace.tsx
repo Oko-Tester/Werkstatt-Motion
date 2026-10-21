@@ -1,5 +1,7 @@
 import { useMemo } from "react";
+import type { Ref } from "react";
 import { formatCents } from "../money";
+import { HeaderActions, HeaderStart } from "../state/headerSlots";
 import type { Payment, SecretHistoryEntry, VehicleHistory } from "../types";
 
 interface HistoryWorkspaceProps {
@@ -12,8 +14,9 @@ interface HistoryWorkspaceProps {
   secretUnlocked: boolean;
   onSearchChange: (value: string) => void;
   onRetry: () => void;
-  onBack: () => void;
   onCloseSession: () => void;
+  /** Wird an das Suchfeld gehängt, damit Strg+F es fokussieren kann. */
+  searchRef?: Ref<HTMLInputElement>;
 }
 
 function includesQuery(values: Array<string | null>, query: string): boolean {
@@ -46,8 +49,8 @@ export function HistoryWorkspace({
   secretUnlocked,
   onSearchChange,
   onRetry,
-  onBack,
   onCloseSession,
+  searchRef,
 }: HistoryWorkspaceProps) {
   const visibleVehicles = useMemo(
     () =>
@@ -86,11 +89,8 @@ export function HistoryWorkspace({
 
   return (
     <section className="history-workspace" aria-label="Historienarbeitsansicht">
-      <div className="history-toolbar">
-        <button type="button" className="btn btn-secondary" onClick={onBack}>
-          ← Zurück
-        </button>
-        <div>
+      <HeaderStart>
+        <div className="header-heading">
           <h2>Historie</h2>
           <p>
             {secretUnlocked
@@ -101,6 +101,7 @@ export function HistoryWorkspace({
         <label className="history-search">
           <span className="visually-hidden">Historie durchsuchen</span>
           <input
+            ref={searchRef}
             type="search"
             value={search}
             placeholder="Historie durchsuchen …"
@@ -108,12 +109,14 @@ export function HistoryWorkspace({
             onChange={(event) => onSearchChange(event.target.value)}
           />
         </label>
-        {secretUnlocked && (
+      </HeaderStart>
+      {secretUnlocked && (
+        <HeaderActions>
           <button type="button" className="btn btn-secondary" onClick={onCloseSession}>
             Secret-Bereich schließen
           </button>
-        )}
-      </div>
+        </HeaderActions>
+      )}
 
       {loading ? (
         <p className="history-state">Historie wird geladen …</p>

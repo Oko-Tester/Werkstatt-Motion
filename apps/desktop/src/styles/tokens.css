@@ -53,4 +53,8 @@
   --control-height: 40px;
   --control-height-lg: 44px;
   --row-height: 52px;
+
+  /* Gerüst: Kopfzeile und Bereichsleiste */
+  --header-height: 64px;
+  --nav-rail-width: 80px;
 }

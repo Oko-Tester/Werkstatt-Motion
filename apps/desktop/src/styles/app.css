@@ -51,8 +51,14 @@ input {
 
 .app-shell {
   display: flex;
-  flex-direction: column;
   height: 100%;
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-main {
@@ -64,23 +70,31 @@ input {
   padding: var(--space-2);
 }
 
-/* ---------- Kopfzeile ---------- */
+/* ---------- Bereichsleiste ---------- */
 
-.app-header {
+.nav-rail {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: var(--nav-rail-width);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+}
+
+.nav-rail-brand {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  height: 64px;
-  padding: 0 var(--space-2);
-  background: var(--color-surface);
+  justify-content: center;
+  /* Gleiche Höhe wie die Kopfzeile: Die Trennlinie läuft durch. */
+  height: var(--header-height);
   border-bottom: 1px solid var(--color-border);
 }
 
 .app-logo {
   flex: none;
-  width: 225px;
-  height: 45px;
+  width: 40px;
+  height: 40px;
   /* Halte-Ziel des versteckten Bereichs: keine Textauswahl, kein
      Browser-Long-Press-Verhalten – und bewusst keinerlei Halte-Animation. */
   user-select: none;
@@ -96,12 +110,130 @@ input {
   pointer-events: none;
 }
 
+.nav-rail-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: var(--space-1) 2px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.nav-rail-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.nav-rail-item:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.nav-rail-item.is-active,
+.nav-rail-item.is-active:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+/* Markierung am Leistenrand: Auch ohne Farbe ist erkennbar, wo man ist. */
+.nav-rail-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-primary);
+}
+
+/* Bereiche mit `placement: "bottom"` (z. B. Einstellungen) stehen abgesetzt unten. */
+.nav-rail-list-bottom {
+  flex: none;
+  overflow: visible;
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---------- Kopfzeile ---------- */
+
+.app-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--header-height);
+  padding: 0 var(--space-2);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
 .header-search {
   flex: 1;
   max-width: 420px;
   /* Darf schrumpfen, damit die Kopfzeile bei 1100 px nie überläuft. */
   min-width: 160px;
-  margin-left: var(--space-1);
+}
+
+/* Die beiden Plätze, die der aktive Bereich mit seinen Teilen füllt. */
+.header-start {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.header-area-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.header-area-actions:empty {
+  display: none;
+}
+
+/* Titel und Untertitel eines Bereichs in der Kopfzeile. */
+.header-heading {
+  min-width: 0;
+}
+
+.header-heading h2,
+.header-heading p {
+  margin: 0 0 0 -2px;
+  /* Verhindert, dass links überstehende Buchstaben (z. B. das „J“) abgeschnitten werden. */
+  padding-left: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-heading h2 {
+  font-size: var(--font-size-title);
+}
+
+.header-heading p {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
 }
 
 .header-actions {
@@ -257,18 +389,6 @@ input {
 
 .btn-secondary:hover {
   background: var(--color-bg);
-}
-
-.header-workspace-button.is-active {
-  background: var(--color-primary-soft);
-  border-color: var(--color-primary-border);
-  color: var(--color-primary);
-  box-shadow: inset 0 -2px 0 var(--color-primary);
-  font-weight: 600;
-}
-
-.header-workspace-button.is-active:hover {
-  background: var(--color-primary-soft);
 }
 
 .btn-success-outline {
@@ -1376,36 +1496,10 @@ input {
   gap: var(--space-2);
 }
 
-.history-toolbar {
-  flex: none;
-  min-height: 56px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-}
-
-.history-toolbar h2,
-.history-toolbar p {
-  margin: 0;
-}
-
-.history-toolbar h2 {
-  font-size: var(--font-size-title);
-}
-
-.history-toolbar p {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-caption);
-}
-
 .history-search {
   flex: 1;
   max-width: 380px;
-  margin-left: auto;
+  min-width: 160px;
 }
 
 .history-search input {
@@ -1506,6 +1600,194 @@ input {
   margin: var(--space-4);
 }
 
+/* ---------- Einstellungen ---------- */
+
+.settings-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.settings-areas {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.settings-area-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--control-height-lg);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.settings-area-item svg {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.settings-area-item:hover {
+  background: var(--color-bg);
+}
+
+.settings-area-item.is-active,
+.settings-area-item.is-active:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.settings-area-item.is-active svg {
+  color: inherit;
+}
+
+.settings-detail {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.settings-detail h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-title);
+}
+
+.settings-empty {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.settings-section h4 {
+  margin: 0 0 4px;
+  font-size: var(--font-size-base);
+}
+
+.settings-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 2px var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.settings-detail .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-section + .settings-section {
+  margin-top: var(--space-3);
+}
+
+/* Titelzeile eines Einstellungsblocks mit Info-Knopf daneben. */
+.settings-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: var(--space-1);
+}
+
+.settings-title h4 {
+  margin: 0;
+}
+
+/* ---------- Info-Knopf ---------- */
+
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  font-weight: 400;
+}
+
+.info-tip-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.info-tip-button:hover,
+.info-tip-button[aria-expanded="true"] {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.info-tip-bubble {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: -8px;
+  width: max-content;
+  max-width: 300px;
+  padding: var(--space-1) 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: 0 10px 30px rgb(20 28 38 / 14%);
+  color: var(--color-text);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+
+/* Überbrückt den Abstand zum Knopf, damit die Blase beim Hinüberfahren offen bleibt. */
+.info-tip-bubble::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  height: 8px;
+}
+
+.info-tip-path {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  user-select: text;
+}
+
 /* ---------- Terminkalender ---------- */
 
 .calendar-workspace {
@@ -1517,38 +1799,11 @@ input {
   animation: calendar-workspace-in 140ms ease-out;
 }
 
-.calendar-toolbar {
-  flex: none;
-  min-height: 64px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-}
-
-.calendar-heading h2,
-.calendar-heading p {
-  margin: 0;
-}
-
-.calendar-heading h2 {
-  font-size: var(--font-size-title);
-}
-
-.calendar-heading p {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-caption);
-}
-
 .calendar-period {
   min-width: 180px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1762,15 +2017,11 @@ input {
 }
 
 @media (max-width: 1180px) {
-  .history-toolbar p {
+  .header-heading p {
     display: none;
   }
 
   .history-search {
     max-width: 280px;
-  }
-
-  .calendar-heading p {
-    display: none;
   }
 }

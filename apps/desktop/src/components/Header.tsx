@@ -1,23 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { Ref } from "react";
 import { toApiError } from "../api";
 import type { BackupResult, RestorePreview } from "../api";
+import { useHeaderSlotRefs } from "../state/headerSlots";
 import type { AvailableUpdate, UpdateProgress } from "../updates";
-import { useLongPress } from "../useLongPress";
-import { PrimaryButton } from "./PrimaryButton";
-import { SearchInput } from "./SearchInput";
 
 interface HeaderProps {
-  search: string;
-  onSearchChange: (value: string) => void;
-  onAddVehicle: () => void;
-  activeWorkspace: "vehicles" | "calendar" | "history";
-  /** Öffnet die gemeinsame Kalenderansicht aller Fahrzeugtermine. */
-  onOpenCalendar: () => void;
-  /** Öffnet die reguläre Fahrzeughistorie; Secret-Inhalte bleiben gesperrt. */
-  onOpenHistory: () => void;
-  /** Wird nach drei Sekunden Gedrückthalten des Logos aufgerufen. */
-  onOpenHiddenArea: () => void;
   onBackup: () => Promise<BackupResult>;
   onPrepareRestore: () => Promise<RestorePreview>;
   onConfirmRestore: () => Promise<void>;
@@ -28,11 +15,9 @@ interface HeaderProps {
     onProgress: (progress: UpdateProgress) => void,
   ) => Promise<void>;
   onDiscardUpdate: () => void;
-  searchRef?: Ref<HTMLInputElement>;
 }
 
 const STATUS_MS = 4000;
-const LONG_PRESS_MS = 3000;
 
 interface StatusMessage {
   text: string;
@@ -40,13 +25,6 @@ interface StatusMessage {
 }
 
 export function Header({
-  search,
-  onSearchChange,
-  onAddVehicle,
-  activeWorkspace,
-  onOpenCalendar,
-  onOpenHistory,
-  onOpenHiddenArea,
   onBackup,
   onPrepareRestore,
   onConfirmRestore,
@@ -54,7 +32,6 @@ export function Header({
   onCheckForUpdates,
   onInstallUpdate,
   onDiscardUpdate,
-  searchRef,
 }: HeaderProps) {
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
@@ -65,7 +42,8 @@ export function Header({
   const timerRef = useRef<number | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
-  const longPress = useLongPress(onOpenHiddenArea, LONG_PRESS_MS);
+  // Die Seite des aktiven Bereichs setzt ihre Teile in diese beiden Plätze.
+  const { startRef, actionsRef } = useHeaderSlotRefs();
 
   useEffect(
     () => () => {
@@ -261,69 +239,9 @@ export function Header({
 
   return (
     <header className="app-header">
-      {/* Werkstattlogo: drei Sekunden Gedrückthalten öffnet den versteckten
-          Bereich. Während des Haltens gibt es bewusst keinerlei sichtbare
-          Rückmeldung – das ist versteckte Bedienung, kein Zugriffsschutz. */}
-      <div className="app-logo" aria-hidden="true" {...longPress}>
-        <img src="/werkstatt-motion-logo.png" alt="" draggable="false" />
-      </div>
       <h1 className="visually-hidden">Werkstatt Motion</h1>
-      <div className="header-search">
-        <SearchInput value={search} onChange={onSearchChange} inputRef={searchRef} />
-      </div>
+      <div className="header-start" ref={startRef} />
       <div className="header-actions">
-        <button
-          type="button"
-          className={`btn btn-secondary header-workspace-button header-calendar-button${
-            activeWorkspace === "calendar" ? " is-active" : ""
-          }`}
-          aria-label="Kalender öffnen"
-          aria-pressed={activeWorkspace === "calendar"}
-          onClick={onOpenCalendar}
-        >
-          <svg
-            aria-hidden="true"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M8 2v4" />
-            <path d="M16 2v4" />
-            <rect width="18" height="18" x="3" y="4" rx="2" />
-            <path d="M3 10h18" />
-          </svg>
-          Kalender
-        </button>
-        <button
-          type="button"
-          className={`btn btn-secondary header-workspace-button${
-            activeWorkspace === "history" ? " is-active" : ""
-          }`}
-          aria-pressed={activeWorkspace === "history"}
-          onClick={onOpenHistory}
-        >
-          <svg
-            aria-hidden="true"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M12 7v5l4 2" />
-          </svg>
-          Historie
-        </button>
         {restorePreview !== null ? (
           // Zweistufige Inline-Bestätigung statt eines Bestätigungsdialogs:
           // Klick 1 hat die Datei gewählt und validiert, Klick 2 stellt her.
@@ -480,7 +398,7 @@ export function Header({
                 </div>
               ) : null}
             </div>
-            <PrimaryButton onClick={onAddVehicle}>+ Fahrzeug</PrimaryButton>
+            <div className="header-area-actions" ref={actionsRef} />
           </>
         )}
       </div>

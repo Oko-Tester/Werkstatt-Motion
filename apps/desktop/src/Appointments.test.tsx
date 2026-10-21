@@ -188,7 +188,7 @@ describe("Fahrzeugtermine", () => {
     expect(appointment).toHaveTextContent(/^Fr 14\.08\.$/);
     expect(appointment).not.toHaveTextContent("·");
 
-    await user.click(screen.getByRole("button", { name: "Kalender öffnen" }));
+    await user.click(screen.getByRole("button", { name: "Kalender" }));
     expect(await screen.findByRole("heading", { name: "Terminkalender" })).toBeInTheDocument();
     expect(screen.getByText("Ohne Uhrzeit")).toBeInTheDocument();
     expect(screen.getByText("Yilmaz, Emre")).toBeInTheDocument();
@@ -200,10 +200,10 @@ describe("Terminkalender als zweite Ansicht derselben Fahrzeugtermine", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await renderApp();
 
-    const calendarButton = screen.getByRole("button", { name: "Kalender öffnen" });
-    expect(calendarButton).toHaveAttribute("aria-pressed", "false");
+    const calendarButton = screen.getByRole("button", { name: "Kalender" });
+    expect(calendarButton).not.toHaveAttribute("aria-current");
     await user.click(calendarButton);
-    expect(calendarButton).toHaveAttribute("aria-pressed", "true");
+    expect(calendarButton).toHaveAttribute("aria-current", "page");
     expect(calendarButton).toHaveClass("is-active");
 
     expect(await screen.findByRole("heading", { name: "Terminkalender" })).toBeInTheDocument();
@@ -220,7 +220,7 @@ describe("Terminkalender als zweite Ansicht derselben Fahrzeugtermine", () => {
 
     await enterAppointment("Müller, Anna", "2026-08-13", "10:15");
     await waitFor(() => expect(backend.vehicles[0].appointmentAt).toBe("2026-08-13T10:15"));
-    await user.click(screen.getByRole("button", { name: "Kalender öffnen" }));
+    await user.click(screen.getByRole("button", { name: "Kalender" }));
 
     expect(await screen.findByRole("heading", { name: "Terminkalender" })).toBeInTheDocument();
     expect(screen.getByText("10:15")).toBeInTheDocument();

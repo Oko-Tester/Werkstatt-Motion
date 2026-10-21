@@ -58,11 +58,11 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     expect(screen.queryByRole("region", { name: "Weitere Zahlungen" })).not.toBeInTheDocument();
     const historyButton = screen.getByRole("button", { name: "Historie" });
     expect(historyButton.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-    expect(historyButton).toHaveAttribute("aria-pressed", "false");
+    expect(historyButton).not.toHaveAttribute("aria-current");
     expect(backend.calls).not.toContain("begin_secret_session");
 
     fireEvent.click(historyButton);
-    expect(historyButton).toHaveAttribute("aria-pressed", "true");
+    expect(historyButton).toHaveAttribute("aria-current", "page");
     expect(historyButton).toHaveClass("is-active");
     const publicWorkspace = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
     expect(within(publicWorkspace).getByText("Müller, Anna")).toBeInTheDocument();
@@ -70,8 +70,8 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     expect(within(publicWorkspace).queryByText("Geheimkonto")).not.toBeInTheDocument();
     expect(backend.calls).toContain("list_completed_vehicle_history");
     expect(backend.calls).not.toContain("list_hidden_entry_history");
-    fireEvent.click(within(publicWorkspace).getByRole("button", { name: "← Zurück" }));
-    expect(historyButton).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Fahrzeuge" }));
+    expect(historyButton).not.toHaveAttribute("aria-current");
     expect(historyButton).not.toHaveClass("is-active");
 
     await openSecret(view.container);
@@ -134,13 +134,13 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Fahrzeuge" })).not.toBeInTheDocument();
 
-    fireEvent.change(within(workspace).getByRole("searchbox", { name: "Historie durchsuchen" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Historie durchsuchen" }), {
       target: { value: "Geheimkonto" },
     });
     expect(within(workspace).queryByText("Müller, Anna")).not.toBeInTheDocument();
     expect(within(workspace).getByText("Geheimkonto")).toBeInTheDocument();
 
-    fireEvent.click(within(workspace).getByRole("button", { name: "← Zurück" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fahrzeuge" }));
     expect(await screen.findByRole("region", { name: "Fahrzeuge" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Weitere Zahlungen" })).toBeInTheDocument();
   });
@@ -160,7 +160,7 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     const workspace = await screen.findByRole("region", { name: "Historienarbeitsansicht" });
     expect(within(workspace).getByText("Geheimkonto")).toBeInTheDocument();
 
-    fireEvent.click(within(workspace).getByRole("button", { name: "Secret-Bereich schließen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Secret-Bereich schließen" }));
     expect(screen.getByRole("region", { name: "Historienarbeitsansicht" })).toBeInTheDocument();
     expect(await within(workspace).findByText("Müller, Anna")).toBeInTheDocument();
     expect(within(workspace).queryByText("Entschlüsselte Secret-History")).not.toBeInTheDocument();
@@ -169,7 +169,7 @@ describe("Secret-Sitzung und Inline-Historie", () => {
     await waitFor(() => expect(backend.calls).toContain("end_secret_session"));
     expect(backend.activeSessionTokens.size).toBe(0);
 
-    fireEvent.click(within(workspace).getByRole("button", { name: "← Zurück" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fahrzeuge" }));
     expect(screen.getByRole("region", { name: "Fahrzeuge" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Weitere Zahlungen" })).not.toBeInTheDocument();
     expect(screen.queryByText("Hochsensibler Entwurf")).not.toBeInTheDocument();

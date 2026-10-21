@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { appointmentDate, appointmentParts, localDateKey } from "../appointments";
+import { HeaderActions, HeaderStart } from "../state/headerSlots";
 import type { Vehicle } from "../types";
 
 interface CalendarWorkspaceProps {
   vehicles: Vehicle[];
-  onBack: () => void;
 }
 
 const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
@@ -46,7 +46,7 @@ function dayAccessibleLabel(date: Date): string {
   });
 }
 
-export function CalendarWorkspace({ vehicles, onBack }: CalendarWorkspaceProps) {
+export function CalendarWorkspace({ vehicles }: CalendarWorkspaceProps) {
   const [month, setMonth] = useState<Date>(() => chooseInitialMonth(vehicles));
   const monthYear = month.getFullYear();
   const monthIndex = month.getMonth();
@@ -94,14 +94,13 @@ export function CalendarWorkspace({ vehicles, onBack }: CalendarWorkspaceProps) 
 
   return (
     <section className="calendar-workspace" aria-label="Kalenderübersicht">
-      <div className="calendar-toolbar">
-        <button type="button" className="btn btn-secondary" onClick={onBack}>
-          ← Zurück
-        </button>
-        <div className="calendar-heading">
+      <HeaderStart>
+        <div className="header-heading">
           <h2>Terminkalender</h2>
           <p>Alle geplanten Fahrzeuge in einer gemeinsamen Monatsübersicht</p>
         </div>
+      </HeaderStart>
+      <HeaderActions>
         <div className="calendar-period" aria-live="polite">
           <strong>{monthTitle(month)}</strong>
           <span>
@@ -133,7 +132,7 @@ export function CalendarWorkspace({ vehicles, onBack }: CalendarWorkspaceProps) 
             <span aria-hidden="true">›</span>
           </button>
         </div>
-      </div>
+      </HeaderActions>
 
       <div className="calendar-surface" role="grid" aria-label={monthTitle(month)}>
         <div className="calendar-weekdays" role="row">

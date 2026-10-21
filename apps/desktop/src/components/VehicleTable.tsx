@@ -13,6 +13,7 @@ import type {
   VehicleStatusField,
   VehicleTextField,
 } from "../types";
+import { VEHICLE_COLUMN_LABELS, toggleVehicleColumn } from "../vehicleColumns";
 import { VehicleRow } from "./VehicleRow";
 import type { VehicleRowData } from "./VehicleRow";
 
@@ -41,15 +42,35 @@ const COLUMN_META: Record<
   VehicleColumnId,
   { label: string; align: "left" | "center"; widthClass?: string }
 > = {
-  appointmentAt: { label: "Termin", align: "left", widthClass: "col-appointment" },
-  customerName: { label: "Kunde", align: "left" },
-  vehicleName: { label: "Fahrzeug", align: "left" },
-  licensePlate: { label: "Kennzeichen", align: "left", widthClass: "col-kennzeichen" },
-  note: { label: "Notiz", align: "left", widthClass: "col-note" },
-  tuvRequired: { label: "TÜV nötig", align: "center", widthClass: "col-status" },
-  partsOrdered: { label: "Teile bestellen", align: "center", widthClass: "col-status" },
-  partsArrived: { label: "Teile angekommen", align: "center", widthClass: "col-status" },
-  isDone: { label: "Fertig", align: "center", widthClass: "col-status" },
+  appointmentAt: {
+    label: VEHICLE_COLUMN_LABELS.appointmentAt,
+    align: "left",
+    widthClass: "col-appointment",
+  },
+  customerName: { label: VEHICLE_COLUMN_LABELS.customerName, align: "left" },
+  vehicleName: { label: VEHICLE_COLUMN_LABELS.vehicleName, align: "left" },
+  licensePlate: {
+    label: VEHICLE_COLUMN_LABELS.licensePlate,
+    align: "left",
+    widthClass: "col-kennzeichen",
+  },
+  note: { label: VEHICLE_COLUMN_LABELS.note, align: "left", widthClass: "col-note" },
+  tuvRequired: {
+    label: VEHICLE_COLUMN_LABELS.tuvRequired,
+    align: "center",
+    widthClass: "col-status",
+  },
+  partsOrdered: {
+    label: VEHICLE_COLUMN_LABELS.partsOrdered,
+    align: "center",
+    widthClass: "col-status",
+  },
+  partsArrived: {
+    label: VEHICLE_COLUMN_LABELS.partsArrived,
+    align: "center",
+    widthClass: "col-status",
+  },
+  isDone: { label: VEHICLE_COLUMN_LABELS.isDone, align: "center", widthClass: "col-status" },
 };
 
 type DropPosition = "before" | "after";
@@ -123,14 +144,8 @@ export function VehicleTable({
   }
 
   function toggleColumn(id: VehicleColumnId) {
-    if (hiddenColumnSet.has(id)) {
-      onHiddenColumnsChange(hiddenColumns.filter((columnId) => columnId !== id));
-      return;
-    }
-    if (visibleColumns.length <= 1) return;
-    onHiddenColumnsChange(
-      columnOrder.filter((columnId) => hiddenColumnSet.has(columnId) || columnId === id),
-    );
+    const next = toggleVehicleColumn(columnOrder, hiddenColumns, id);
+    if (next !== null) onHiddenColumnsChange(next);
   }
 
   function moveByKeyboard(id: string, direction: -1 | 1) {
