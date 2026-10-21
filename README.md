@@ -19,11 +19,30 @@ Keine verschachtelten Menüs, kein unnötiger Papierkram – einfach öffnen und
 - Zusätzliche Kosten diskret in einem versteckten Bereich erfassen
 - Fahrzeuge schnell nach Kunde, Kennzeichen oder Modell finden
 - Erledigte Aufträge in der Historie nachschlagen
-- Daten auf einem USB-Stick oder an einem anderen Ort sichern
+- Daten täglich automatisch sichern – zusätzlich auf einem USB-Stick oder Netzlaufwerk
 - Neue Versionen direkt in der App suchen und sicher installieren
 - Funktioniert auch ohne Internet
 
 ## So einfach geht's
+
+### Zwischen Bereichen wechseln
+
+Links am Fensterrand liegt die Leiste mit den Bereichen **„Fahrzeuge“**,
+**„Kalender“** und **„Historie“**. Ein Klick wechselt direkt in den Bereich;
+der aktuelle Bereich ist blau markiert.
+
+Jeder Bereich bringt seine eigene Kopfzeile mit: Die Suche und **„+ Fahrzeug“**
+stehen nur im Bereich **„Fahrzeuge“**, die Historie hat ihre eigene Suche, und
+der Kalender zeigt dort Monat und Navigation. Strg+F springt in die Suche des
+aktuellen Bereichs.
+
+Ganz unten in der Leiste liegen die **„Einstellungen“**. Dort steht jeder Bereich
+einzeln in einer Liste, daneben seine Einstellungen. Bereiche, die noch keine
+haben, zeigen einen Hinweis. Bei **„Fahrzeuge“** lassen sich die Spalten der
+Fahrzeugliste ein- und ausblenden und ihre Reihenfolge zurücksetzen. Unter den
+Bereichen steht die **„Datensicherung“** für die ganze App (siehe unten). Wo
+etwas eine Erklärung braucht, steht ein kleiner Info-Knopf (ⓘ): Beim
+Darüberfahren oder Anklicken zeigt er, was dort passiert.
 
 ### Fahrzeug anlegen
 
@@ -56,19 +75,28 @@ vorhandenen Termin klicken. Datum und optional eine Uhrzeit auswählen und
 speichern; der Wochentag wird automatisch ermittelt. Die Uhrzeit kann leer
 bleiben. Mit **„Termin entfernen“** lässt sich die Planung wieder löschen.
 
-Über den gut sichtbaren Button **„Kalender“** öffnet sich die Monatsübersicht.
+Der Termin darf auch zuerst kommen – praktisch, wenn ein Kunde am Telefon
+zunächst sagt, wann er kommen kann: Nach **„+ Fahrzeug“** in der neuen Zeile
+auf **„Termin hinzufügen“** klicken, Datum und Uhrzeit wählen und mit
+**„Termin speichern“** bestätigen. Der Cursor springt danach in das Feld
+**„Kunde“**. Gespeichert wird die Zeile samt Termin, sobald Kunde sowie Fahrzeug
+oder Kennzeichen eingetragen sind und die Zeile verlassen wird. Ein Termin ohne
+Kunden wird nicht aufgehoben: Wird die Zeile ohne Kunden verlassen, ist der
+Eintrag wieder verworfen.
+
+Über **„Kalender“** in der Leiste links öffnet sich die Monatsübersicht.
 Dort erscheinen dieselben Fahrzeugtermine mit Uhrzeit beziehungsweise dem
 Hinweis **„Ohne Uhrzeit“**, Kunde, Fahrzeug und Kennzeichen. Änderungen aus der
 Fahrzeugliste sind unmittelbar auch im Kalender sichtbar.
 
-Über die beiden Arbeitsansichten **„Kalender“** und **„Historie“** lässt sich
-jederzeit zwischen anstehenden Terminen und abgeschlossenen Vorgängen wechseln.
+Über die Leiste links lässt sich jederzeit zwischen Fahrzeugen, anstehenden
+Terminen und abgeschlossenen Vorgängen wechseln.
 
 ![Werkstatt Motion mit Monatskalender sowie den Ansichten Kalender und Historie](docs/images/werkstatt-motion-kalender.png)
 
 ### Historie öffnen
 
-Über den Button **„Historie“** werden abgeschlossene Fahrzeuge als
+Über **„Historie“** in der Leiste links werden abgeschlossene Fahrzeuge als
 unveränderliche Snapshots angezeigt. Zusätzlich sind dort bereits bezahlte
 Kosten mit Fahrzeug, Kennzeichen, Betrag und Zahlungszeitpunkt zu finden. Das
 Suchfeld filtert beide Bereiche gemeinsam.
@@ -148,7 +176,10 @@ Werkstatt Motion erstellt automatisch höchstens ein vollständiges Backup pro
 Kalendertag. Beim App-Start wird sofort geprüft, ob die heutige Sicherung fehlt;
 bei länger geöffneter App läuft diese Prüfung stündlich weiter. Tägliche Backups
 werden für 14 Tage aufbewahrt, ältere tägliche Sicherungen löscht die App
-automatisch. Dazu muss die App an dem jeweiligen Tag geöffnet sein.
+automatisch – die drei neuesten bleiben aber immer erhalten, auch wenn sie älter
+sind. So geht nach einer längeren Pause (Urlaub, defekter Rechner) die letzte gute
+Sicherung davor nicht verloren. Dazu muss die App an dem jeweiligen Tag geöffnet
+sein.
 
 Die täglichen Sicherungen liegen im Anwendungsdatenverzeichnis:
 
@@ -157,12 +188,42 @@ Windows: %APPDATA%\de.werkstattmotion.desktop\backups
 Linux:   ~/.local/share/de.werkstattmotion.desktop/backups
 ```
 
-Über **„Backup“** lässt sich jederzeit eine Sicherung erstellen – zum Beispiel
-auf einem USB-Stick. Mit **„Wiederherstellen“** kann eine Sicherung später
-wieder eingespielt werden.
+### Zweiter Speicherort und „Jetzt sichern“
 
-**Empfehlung:** Regelmäßig ein Backup erstellen und getrennt vom Werkstatt-PC
-aufbewahren.
+Unter **„Einstellungen“ › „Datensicherung“** steht, wann zuletzt gesichert wurde –
+auf diesem Computer und am zweiten Speicherort. Mit **„Ordner wählen …“** (später
+**„Ändern …“**) lässt sich ein Ordner auf einem USB-Stick oder Netzlaufwerk
+festlegen, **„Entfernen“** nimmt ihn wieder heraus. Die App legt darin einen
+eigenen Ordner an (`Werkstatt-Motion-Sicherung-<Computername>`) und sichert nur
+dort: Jeden Tag kommt eine Kopie hinzu (`taeglich-…`), und nach 14 Tagen räumt sie
+dort wie auf dem Computer auf (auch hier bleiben mindestens die drei neuesten) –
+ausschließlich ihre eigenen täglichen Dateien.
+Alles andere im gewählten Ordner bleibt unberührt, und mehrere Computer können
+sich einen Stick teilen. Die erste Kopie entsteht gleich nach dem Einrichten.
+
+Außer diesem eigenen Ordner legt die App im zweiten Speicherort nie etwas an. Ist
+der USB-Stick nicht eingesteckt oder das Netzlaufwerk nicht verbunden – oder steckt
+am selben Laufwerksbuchstaben ein anderer Datenträger –, schreibt sie nichts auf ein
+anderes Laufwerk. Stattdessen weist sie darauf hin (einmal pro Tag) und zeigt es in
+den Einstellungen rot an. Liegt die letzte Sicherung mehr als zwei Tage zurück,
+färbt sich auch diese Zeile rot. Sobald der Ordner wieder erreichbar ist, holt die
+App die heutige Kopie beim nächsten Prüflauf nach.
+
+**„Jetzt sichern“** schreibt sofort eine Sicherung in den zweiten Speicherort
+(`manuell-<Datum>_<Uhrzeit>.werkstattbackup`); manuelle Sicherungen löscht die
+App nie. Ist noch kein zweiter Speicherort eingerichtet, fragt sie wie das Menü
+**„Backup“** nach dem Ziel. Die Wahl des Ordners steht in der Datei
+`sicherung.json` neben der Datenbank und bleibt auch nach einer
+Wiederherstellung erhalten.
+
+### Backup von Hand
+
+Über **„Backup“** im Drei-Punkte-Menü lässt sich jederzeit eine Sicherung an
+einem frei gewählten Ort erstellen – zum Beispiel auf einem USB-Stick. Mit
+**„Wiederherstellen“** kann eine Sicherung später wieder eingespielt werden.
+
+**Empfehlung:** Einen zweiten Speicherort einrichten und regelmäßig ein Backup
+getrennt vom Werkstatt-PC aufbewahren.
 
 ### Automatische Sicherung wiederherstellen
 
