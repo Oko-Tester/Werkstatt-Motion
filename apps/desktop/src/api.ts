@@ -207,9 +207,34 @@ export interface UpdateBackupResult {
   nextToInstallation: boolean;
 }
 
+/** Ergebnis der Kopie in den zweiten Speicherort. */
+export interface SecondBackupResult {
+  /** true, wenn heute eine neue Kopie geschrieben wurde. */
+  created: boolean;
+  path: string | null;
+  /** Grund, falls der zweite Ordner gerade nicht erreichbar ist. */
+  error: string | null;
+}
+
 export interface DailyBackupResult {
   created: boolean;
   path: string;
+  /** `null`, wenn kein zweiter Speicherort eingerichtet ist. */
+  second: SecondBackupResult | null;
+}
+
+/** Stand der Datensicherung für die Einstellungen. */
+export interface BackupStatus {
+  /** Ordner der automatischen Sicherung auf diesem Computer. */
+  localDir: string;
+  /** Zeitpunkt der letzten Tagessicherung (Millisekunden seit 1970). */
+  localLastAt: number | null;
+  retentionDays: number;
+  secondDir: string | null;
+  /** Zeitpunkt der letzten Sicherung im zweiten Ordner (Millisekunden seit 1970). */
+  secondLastAt: number | null;
+  /** Grund, falls der zweite Ordner gerade nicht erreichbar ist. */
+  secondError: string | null;
 }
 
 export interface RestorePreview {
@@ -226,9 +251,35 @@ export function createBackup(): Promise<BackupResult> {
   return invoke("create_backup");
 }
 
-/** Erstellt höchstens ein automatisches Backup pro lokalem Kalendertag. */
+/**
+ * Erstellt höchstens ein automatisches Backup pro lokalem Kalendertag und
+ * kopiert es – falls eingerichtet – in den zweiten Speicherort.
+ */
 export function createDailyBackup(): Promise<DailyBackupResult> {
   return invoke("create_daily_backup");
+}
+
+/** Letzte Sicherungen und zweiter Speicherort, gelesen aus den Dateien selbst. */
+export function getBackupStatus(): Promise<BackupStatus> {
+  return invoke("get_backup_status");
+}
+
+/** Öffnet den nativen Ordner-Dialog für den zweiten Speicherort. */
+export function chooseSecondBackupDir(): Promise<BackupStatus> {
+  return invoke("choose_second_backup_dir");
+}
+
+/** Entfernt den zweiten Speicherort; bereits kopierte Sicherungen bleiben dort. */
+export function clearSecondBackupDir(): Promise<BackupStatus> {
+  return invoke("clear_second_backup_dir");
+}
+
+/**
+ * „Jetzt sichern“: schreibt sofort in den zweiten Speicherort. Ohne ihn fragt
+ * sie wie `createBackup` über den Speichern-Dialog nach dem Ziel.
+ */
+export function backupNow(): Promise<BackupResult> {
+  return invoke("backup_now");
 }
 
 /**

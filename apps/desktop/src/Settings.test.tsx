@@ -27,13 +27,14 @@ async function openSettings(areas?: readonly Area[]) {
 }
 
 describe("Einstellungen", () => {
-  it("führt jeden Bereich einzeln auf, nur nicht die Einstellungen selbst", async () => {
+  it("führt jeden Bereich einzeln auf, dazu die Datensicherung, nur nicht die Einstellungen selbst", async () => {
     const { list } = await openSettings();
 
     expect(within(list).getAllByRole("button").map((button) => button.textContent)).toEqual([
       "Fahrzeuge",
       "Kalender",
       "Historie",
+      "Datensicherung",
     ]);
     expect(within(list).getByRole("button", { name: "Fahrzeuge" })).toHaveAttribute(
       "aria-current",
@@ -77,6 +78,7 @@ describe("Einstellungen", () => {
       "Kalender",
       "Historie",
       "Kunden",
+      "Datensicherung",
     ]);
     await user.click(within(list).getByRole("button", { name: "Kunden" }));
 

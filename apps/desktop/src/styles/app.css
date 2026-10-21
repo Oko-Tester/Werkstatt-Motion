@@ -1697,6 +1697,13 @@ input {
   margin-top: var(--space-3);
 }
 
+/* Trennt die Einstellungen der ganzen App von denen der Bereiche. */
+.settings-group-start {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border);
+}
+
 /* Titelzeile eines Einstellungsblocks mit Info-Knopf daneben. */
 .settings-title {
   display: flex;
@@ -1707,6 +1714,103 @@ input {
 
 .settings-title h4 {
   margin: 0;
+}
+
+/* Kleinere Schaltfläche für Aktionen innerhalb einer Zeile. */
+.btn-sm {
+  height: 32px;
+  padding: 0 12px;
+}
+
+/* Datensicherung: eine Karte mit je einer Zeile pro Speicherort. */
+.backup-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.backup-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--row-height);
+  padding: var(--space-1) var(--space-2);
+}
+
+.backup-row + .backup-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.backup-row-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.backup-row-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.backup-row-value {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.backup-row-value.is-muted {
+  color: var(--color-text-muted);
+}
+
+.backup-row-value.is-error {
+  color: var(--color-danger);
+}
+
+.backup-row-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.backup-row-detail.is-error {
+  color: var(--color-danger);
+}
+
+.backup-row-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+}
+
+.backup-now {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.backup-message {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+
+.backup-message.is-ok {
+  background: var(--color-success-soft);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
+}
+
+.backup-message.is-error {
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
 }
 
 /* ---------- Info-Knopf ---------- */

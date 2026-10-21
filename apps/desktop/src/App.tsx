@@ -47,13 +47,35 @@ function AppFrame({ areas }: { areas: readonly Area[] }) {
 
   useEffect(() => {
     let active = true;
+    // Ein langsames oder hängendes Laufwerk soll keine stündlich neuen Läufe aufstauen.
+    let running = false;
+    // Probleme mit dem zweiten Speicherort melden wir nicht stündlich, sondern
+    // einmal pro Tag und wenn sich der Grund ändert.
+    let lastSecondError: string | null = null;
+    let lastSecondErrorDay = "";
 
     function createDailyBackup() {
-      void api.createDailyBackup().catch((err) => {
-        if (active) {
-          showNotice(`Automatisches Backup fehlgeschlagen: ${toApiError(err).message}`);
-        }
-      });
+      if (running) return;
+      running = true;
+      void api
+        .createDailyBackup()
+        .then((result) => {
+          const error = result.second?.error ?? null;
+          const today = new Date().toDateString();
+          if (active && error !== null && (error !== lastSecondError || today !== lastSecondErrorDay)) {
+            showNotice(`Zweite Sicherung nicht möglich: ${error}`);
+            lastSecondErrorDay = today;
+          }
+          lastSecondError = error;
+        })
+        .catch((err) => {
+          if (active) {
+            showNotice(`Automatisches Backup fehlgeschlagen: ${toApiError(err).message}`);
+          }
+        })
+        .finally(() => {
+          running = false;
+        });
     }
 
     createDailyBackup();

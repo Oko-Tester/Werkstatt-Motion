@@ -53,6 +53,21 @@ interface Snapshot {
   preferences: UiPreferences;
 }
 
+const SECOND_DIR_UNREACHABLE =
+  "Der zweite Sicherungsordner ist nicht erreichbar. Ist der USB-Stick eingesteckt oder das Netzlaufwerk verbunden?";
+
+/** Zustand der Datensicherung im Fake; Tests stellen ihn vor dem Rendern ein. */
+export interface FakeBackupConfig {
+  /** Zweiter Speicherort; `null`, solange keiner eingerichtet ist. */
+  secondDir: string | null;
+  /** false: Der zweite Ordner ist nicht erreichbar (USB-Stick nicht eingesteckt). */
+  reachable: boolean;
+  /** Ordner, den der Ordner-Dialog beim nächsten Mal liefert. */
+  nextDir: string;
+  localLastAt: number | null;
+  secondLastAt: number | null;
+}
+
 export interface FakeBackend {
   vehicles: Vehicle[];
   vehicleHistory: VehicleHistory[];
@@ -63,11 +78,19 @@ export interface FakeBackend {
   preferences: UiPreferences;
   backups: Snapshot[];
   dailyBackups: Snapshot[];
+  backupConfig: FakeBackupConfig;
   calls: string[];
   callPayloads: Array<{ cmd: string; payload: Record<string, unknown> }>;
   activeSessionTokens: Set<string>;
   planFailure: (cmd: string, error?: ApiError) => void;
-  planCancel: (cmd: "create_backup" | "prepare_restore") => void;
+  planCancel: (
+    cmd: "create_backup" | "prepare_restore" | "choose_second_backup_dir" | "backup_now",
+  ) => void;
+  /**
+   * Hält den nächsten `create_daily_backup` an, als hinge das Laufwerk; die
+   * zurückgegebene Funktion gibt ihn wieder frei.
+   */
+  holdDailyBackup: () => () => void;
 }
 
 function validationError(field: string, message: string): ApiError {
@@ -296,15 +319,48 @@ export function installFakeBackend(seed?: {
 
   const backups: Snapshot[] = [];
   const dailyBackups: Snapshot[] = [];
+  const backupConfig: FakeBackupConfig = {
+    secondDir: null,
+    reachable: true,
+    nextDir: "/media/usb/Sicherung",
+    localLastAt: null,
+    secondLastAt: null,
+  };
+  let secondHasToday = false;
   let stagedRestore: Snapshot | null = null;
   const calls: string[] = [];
   const callPayloads: Array<{ cmd: string; payload: Record<string, unknown> }> = [];
   const failures = new Map<string, ApiError>();
   const cancels = new Set<string>();
+  let dailyBackupHold: Promise<void> | null = null;
   const activeSessionTokens = new Set<string>();
 
   function requireHiddenAccess() {
     if (seed?.hiddenError) throw seed.hiddenError;
+  }
+
+  function backupStatus() {
+    const { secondDir, reachable } = backupConfig;
+    return {
+      localDir: "/data/backups",
+      localLastAt: backupConfig.localLastAt,
+      retentionDays: 14,
+      secondDir,
+      secondLastAt: secondDir !== null && reachable ? backupConfig.secondLastAt : null,
+      secondError: secondDir !== null && !reachable ? SECOND_DIR_UNREACHABLE : null,
+    };
+  }
+
+  function mirrorToSecondDir() {
+    const { secondDir, reachable } = backupConfig;
+    if (secondDir === null) return null;
+    if (!reachable) return { created: false, path: null, error: SECOND_DIR_UNREACHABLE };
+    const created = !secondHasToday;
+    if (created) {
+      secondHasToday = true;
+      backupConfig.secondLastAt = Date.now();
+    }
+    return { created, path: `${secondDir}/taeglich-heute.werkstattbackup`, error: null };
   }
 
   function requireSession(args: Record<string, unknown>): string {
@@ -831,11 +887,46 @@ export function installFakeBackend(seed?: {
         return { saved: true, path: "/backups/test.werkstattbackup" };
       }
       case "create_daily_backup": {
-        if (dailyBackups.length === 0) {
-          dailyBackups.push(takeSnapshot());
-          return { created: true, path: "/backups/taeglich-heute.werkstattbackup" };
+        const run = () => {
+          const created = dailyBackups.length === 0;
+          if (created) {
+            dailyBackups.push(takeSnapshot());
+            backupConfig.localLastAt = Date.now();
+          }
+          return {
+            created,
+            path: "/backups/taeglich-heute.werkstattbackup",
+            second: mirrorToSecondDir(),
+          };
+        };
+        const hold = dailyBackupHold;
+        dailyBackupHold = null;
+        return hold ? hold.then(run) : run();
+      }
+      case "get_backup_status":
+        return backupStatus();
+      case "choose_second_backup_dir": {
+        if (cancels.delete(cmd)) return backupStatus();
+        backupConfig.secondDir = backupConfig.nextDir;
+        backupConfig.secondLastAt = null;
+        secondHasToday = false;
+        return backupStatus();
+      }
+      case "clear_second_backup_dir":
+        backupConfig.secondDir = null;
+        return backupStatus();
+      case "backup_now": {
+        if (backupConfig.secondDir === null) {
+          if (cancels.delete(cmd)) return { saved: false, path: null };
+          backups.push(takeSnapshot());
+          return { saved: true, path: "/backups/test.werkstattbackup" };
         }
-        return { created: false, path: "/backups/taeglich-heute.werkstattbackup" };
+        if (!backupConfig.reachable) {
+          throw { code: "backup", message: SECOND_DIR_UNREACHABLE };
+        }
+        backups.push(takeSnapshot());
+        backupConfig.secondLastAt = Date.now();
+        return { saved: true, path: `${backupConfig.secondDir}/manuell-test.werkstattbackup` };
       }
       case "create_update_backup": {
         const snapshot = takeSnapshot();
@@ -900,6 +991,7 @@ export function installFakeBackend(seed?: {
     preferences,
     backups,
     dailyBackups,
+    backupConfig,
     calls,
     callPayloads,
     activeSessionTokens,
@@ -908,6 +1000,13 @@ export function installFakeBackend(seed?: {
     },
     planCancel: (cmd) => {
       cancels.add(cmd);
+    },
+    holdDailyBackup: () => {
+      let release = () => {};
+      dailyBackupHold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
     },
   };
 }
