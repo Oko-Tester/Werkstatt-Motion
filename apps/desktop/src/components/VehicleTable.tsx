@@ -200,7 +200,7 @@ export function VehicleTable({
     partsOrdered: draft.partsOrdered,
     partsArrived: draft.partsArrived,
     isDone: draft.isDone,
-    appointmentAt: null,
+    appointmentAt: draft.appointmentAt,
   }));
   const isEmpty = !loading && loadError === null && draftRows.length === 0 && vehicles.length === 0;
 

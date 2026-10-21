@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { DragEvent, FocusEvent, KeyboardEvent, ReactNode } from "react";
 import type {
   VehicleColumnId,
@@ -64,6 +64,7 @@ export function VehicleRow({
   onMoveDown,
 }: VehicleRowProps) {
   const [dragEnabled, setDragEnabled] = useState(false);
+  const rowRef = useRef<HTMLTableRowElement>(null);
   const rowName = vehicle.licensePlate || vehicle.customerName || "Neues Fahrzeug";
   const rowClassName = [
     "vehicle-row",
@@ -92,9 +93,32 @@ export function VehicleRow({
   }
 
   function handleRowBlur(event: FocusEvent<HTMLTableRowElement>) {
-    if (onRowLeave && !event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      onRowLeave(vehicle.id);
-    }
+    if (!onRowLeave) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && event.currentTarget.contains(next)) return;
+    // Die Terminauswahl hängt als Portal im body, gehört aber zur Zeile: Der
+    // Wechsel dorthin verlässt die Zeile nicht und darf sie nicht verwerfen.
+    if (next instanceof Element && next.closest("[data-keeps-row-focus]") !== null) return;
+    onRowLeave(vehicle.id);
+  }
+
+  // Nach dem Termin geht es in der neuen Zeile mit dem ersten fehlenden Feld weiter.
+  function focusFirstMissingField() {
+    const field =
+      vehicle.customerName.trim() === ""
+        ? "customerName"
+        : vehicle.vehicleName.trim() === "" && vehicle.licensePlate.trim() === ""
+          ? "vehicleName"
+          : null;
+    if (field === null) return;
+    rowRef.current
+      ?.querySelector<HTMLInputElement>(`td[data-column-id="${field}"] input`)
+      ?.focus();
+  }
+
+  function changeAppointment(appointmentAt: string | null) {
+    onAppointmentChange(vehicle.id, appointmentAt);
+    if (isDraft && appointmentAt !== null) focusFirstMissingField();
   }
 
   function renderColumn(columnId: VehicleColumnId): ReactNode {
@@ -104,8 +128,7 @@ export function VehicleRow({
           <AppointmentField
             appointmentAt={vehicle.appointmentAt}
             customerName={vehicle.customerName}
-            disabled={isDraft}
-            onChange={(appointmentAt) => onAppointmentChange(vehicle.id, appointmentAt)}
+            onChange={changeAppointment}
           />
         );
       case "customerName":
@@ -192,6 +215,8 @@ export function VehicleRow({
 
   return (
     <tr
+      ref={rowRef}
+      data-row-id={vehicle.id}
       className={rowClassName}
       draggable={dragEnabled}
       onBlur={handleRowBlur}

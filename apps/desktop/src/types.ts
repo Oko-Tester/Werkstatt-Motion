@@ -162,6 +162,8 @@ export interface VehicleDraft {
   partsOrdered: boolean;
   partsArrived: boolean;
   isDone: boolean;
+  /** Darf schon vor dem Kunden gewählt werden; wird mit der Zeile gespeichert. */
+  appointmentAt: string | null;
 }
 
 /** Neue, noch nicht gespeicherte Zahlungszeile. */

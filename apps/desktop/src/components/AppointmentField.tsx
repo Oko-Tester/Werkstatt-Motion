@@ -7,7 +7,6 @@ import { GermanDatePicker } from "./GermanDatePicker";
 interface AppointmentFieldProps {
   appointmentAt: string | null;
   customerName: string;
-  disabled?: boolean;
   onChange: (appointmentAt: string | null) => void;
 }
 
@@ -23,7 +22,6 @@ const VIEWPORT_MARGIN = 8;
 export function AppointmentField({
   appointmentAt,
   customerName,
-  disabled = false,
   onChange,
 }: AppointmentFieldProps) {
   const [open, setOpen] = useState(false);
@@ -60,7 +58,6 @@ export function AppointmentField({
   }, [open]);
 
   function openEditor(event: MouseEvent<HTMLButtonElement>) {
-    if (disabled) return;
     const current = appointmentParts(appointmentAt);
     setDate(current?.date ?? localDateKey(new Date()));
     setTime(current?.time ?? "");
@@ -78,16 +75,23 @@ export function AppointmentField({
     setOpen(true);
   }
 
-  function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (date === "") return;
-    onChange(time === "" ? date : `${date}T${time}`);
+  // Der Fokus geht zurück auf den Termin-Button, bevor die Auswahl verschwindet.
+  // Sonst würde das Entfernen des fokussierten Felds die Tabellenzeile verlassen.
+  function close() {
+    buttonRef.current?.focus();
     setOpen(false);
   }
 
+  function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (date === "") return;
+    close();
+    onChange(time === "" ? date : `${date}T${time}`);
+  }
+
   function remove() {
+    close();
     onChange(null);
-    setOpen(false);
   }
 
   const accessibleName = customerName.trim() || "Neues Fahrzeug";
@@ -101,8 +105,7 @@ export function AppointmentField({
         aria-label={`Termin für ${accessibleName}`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        disabled={disabled}
-        title={disabled ? "Termin nach dem Speichern des Fahrzeugs verfügbar" : "Termin bearbeiten"}
+        title="Termin bearbeiten"
         onClick={openEditor}
       >
         <svg
@@ -121,7 +124,7 @@ export function AppointmentField({
           <rect width="18" height="18" x="3" y="4" rx="2" />
           <path d="M3 10h18" />
         </svg>
-        <span>{formatted ?? (disabled ? "Nach Speichern" : "Termin hinzufügen")}</span>
+        <span>{formatted ?? "Termin hinzufügen"}</span>
       </button>
       {open
         ? createPortal(
@@ -130,6 +133,8 @@ export function AppointmentField({
               className="appointment-popover"
               role="dialog"
               aria-label={`Termin für ${accessibleName} bearbeiten`}
+              // Das Portal liegt im body; der Fokus darin gehört weiter zur Tabellenzeile.
+              data-keeps-row-focus="true"
               style={{ left: position.left, top: position.top }}
             >
               <div className="appointment-popover-heading">

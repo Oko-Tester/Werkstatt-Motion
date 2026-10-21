@@ -27,6 +27,8 @@ export interface NewVehicleInput {
   partsOrdered?: boolean;
   partsArrived?: boolean;
   isDone?: boolean;
+  /** Optionaler Werkstatttermin, der gleich mit dem Fahrzeug gespeichert wird. */
+  appointmentAt?: string | null;
 }
 
 export type VehiclePatch = Partial<

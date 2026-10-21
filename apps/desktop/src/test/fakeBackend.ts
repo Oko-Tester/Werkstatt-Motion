@@ -505,7 +505,9 @@ export function installFakeBackend(seed?: {
         const vehicleName = String(input.vehicleName ?? "").trim();
         const licensePlate = normalizeLicensePlate(String(input.licensePlate ?? ""));
         const note = String(input.note ?? "").trim();
+        const appointmentAt = input.appointmentAt ?? null;
         validateVehicleText(customerName, vehicleName, licensePlate);
+        validateAppointmentAt(appointmentAt);
         const timestamp = nextTimestamp();
         const vehicle: Vehicle = {
           id: nextId("v"),
@@ -513,7 +515,7 @@ export function installFakeBackend(seed?: {
           vehicleName,
           licensePlate,
           note,
-          appointmentAt: null,
+          appointmentAt,
           tuvRequired: Boolean(input.tuvRequired),
           partsOrdered: Boolean(input.partsOrdered),
           partsArrived: Boolean(input.partsArrived),

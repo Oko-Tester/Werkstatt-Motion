@@ -379,13 +379,18 @@ pub fn list_vehicles(conn: &Connection) -> Result<Vec<Vehicle>, ApiError> {
 
 /// Legt ein Fahrzeug an. Neue Fahrzeuge kommen ans Ende der Liste. Ein
 /// bereits abgeschlossen angelegtes Fahrzeug erhält im selben Commit seinen
-/// unveränderlichen History-Snapshot.
+/// unveränderlichen History-Snapshot. Ein optionaler Termin wird im selben
+/// Insert gespeichert; Kunde und Fahrzeug bleiben auch mit Termin Pflicht.
 pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, ApiError> {
     let customer_name = input.customer_name.trim().to_string();
     let vehicle_name = input.vehicle_name.trim().to_string();
     let license_plate = normalize_license_plate(&input.license_plate);
     let note = input.note.trim().to_string();
     validate_vehicle_text(&customer_name, &vehicle_name, &license_plate)?;
+    let appointment_at = input.appointment_at;
+    if let Some(value) = appointment_at.as_deref() {
+        validate_appointment_at(value)?;
+    }
 
     let id = Uuid::new_v4().to_string();
     let tx = conn.unchecked_transaction()?;
@@ -394,10 +399,10 @@ pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, A
         "INSERT INTO vehicles (
             id, customer_name, vehicle_name, license_plate, note,
             tuv_required, parts_ordered, parts_arrived, is_done,
-            position, created_at, updated_at
+            position, created_at, updated_at, appointment_at
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-            (SELECT COALESCE(MAX(position), -1) + 1 FROM vehicles), ?10, ?10
+            (SELECT COALESCE(MAX(position), -1) + 1 FROM vehicles), ?10, ?10, ?11
          )",
         params![
             id,
@@ -410,6 +415,7 @@ pub fn create_vehicle(conn: &Connection, input: NewVehicle) -> Result<Vehicle, A
             input.parts_arrived,
             input.is_done,
             timestamp,
+            appointment_at,
         ],
     )?;
     if input.is_done {
@@ -1366,6 +1372,115 @@ mod tests {
                 .as_deref(),
             Some("2000-02-29T23:59")
         );
+    }
+
+    #[test]
+    fn fahrzeug_wird_gleich_mit_termin_angelegt() {
+        let conn = test_conn();
+        let with_time = create_vehicle(
+            &conn,
+            NewVehicle {
+                appointment_at: Some("2028-03-01T09:30".to_string()),
+                ..vehicle_input("Meier", "Golf", "M-T 3")
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            with_time.appointment_at.as_deref(),
+            Some("2028-03-01T09:30")
+        );
+        let serialized = serde_json::to_value(&with_time).unwrap();
+        assert_eq!(serialized["appointmentAt"], "2028-03-01T09:30");
+
+        let date_only = create_vehicle(
+            &conn,
+            NewVehicle {
+                appointment_at: Some("2028-03-02".to_string()),
+                ..vehicle_input("Kaya", "Polo", "")
+            },
+        )
+        .unwrap();
+        assert_eq!(date_only.appointment_at.as_deref(), Some("2028-03-02"));
+
+        let without = create_vehicle(&conn, vehicle_input("Lang", "Corsa", "")).unwrap();
+        assert_eq!(without.appointment_at, None);
+
+        let listed = list_vehicles(&conn).unwrap();
+        assert_eq!(listed.len(), 3);
+        assert_eq!(
+            listed[0].appointment_at.as_deref(),
+            Some("2028-03-01T09:30")
+        );
+    }
+
+    #[test]
+    fn ungueltiger_termin_beim_anlegen_verhindert_das_speichern() {
+        let conn = test_conn();
+        for invalid in ["", "2026-02-30", "2026-08-12T25:00", "12.08.2026"] {
+            let err = create_vehicle(
+                &conn,
+                NewVehicle {
+                    appointment_at: Some(invalid.to_string()),
+                    ..vehicle_input("Meier", "Golf", "M-T 4")
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                err.code,
+                ErrorCode::Validation,
+                "unerwartet gültig: {invalid:?}"
+            );
+            assert_eq!(err.field.as_deref(), Some("appointmentAt"));
+        }
+        assert!(list_vehicles(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn auch_mit_termin_brauchen_neue_fahrzeuge_kunde_und_fahrzeug() {
+        let conn = test_conn();
+        let appointment = || Some("2028-03-01".to_string());
+
+        let err = create_vehicle(
+            &conn,
+            NewVehicle {
+                appointment_at: appointment(),
+                ..NewVehicle::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Validation);
+        assert_eq!(err.field.as_deref(), Some("customerName"));
+
+        let err = create_vehicle(
+            &conn,
+            NewVehicle {
+                appointment_at: appointment(),
+                ..vehicle_input("Nur Kunde", "", "")
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Validation);
+        assert_eq!(err.field.as_deref(), Some("vehicleName"));
+
+        assert!(list_vehicles(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn neues_fahrzeug_liest_den_termin_aus_dem_frontend() {
+        let with_time: NewVehicle =
+            serde_json::from_str(r#"{"customerName":"A","appointmentAt":"2028-03-01T09:30"}"#)
+                .unwrap();
+        assert_eq!(
+            with_time.appointment_at.as_deref(),
+            Some("2028-03-01T09:30")
+        );
+
+        let explicit_null: NewVehicle =
+            serde_json::from_str(r#"{"customerName":"A","appointmentAt":null}"#).unwrap();
+        assert_eq!(explicit_null.appointment_at, None);
+
+        let missing: NewVehicle = serde_json::from_str(r#"{"customerName":"A"}"#).unwrap();
+        assert_eq!(missing.appointment_at, None);
     }
 
     #[test]

@@ -634,16 +634,6 @@ input {
   font-weight: 500;
 }
 
-.appointment-trigger:disabled {
-  color: var(--color-border-strong);
-  cursor: not-allowed;
-}
-
-.appointment-trigger:disabled:hover {
-  border-color: transparent;
-  background: transparent;
-}
-
 .appointment-popover {
   position: fixed;
   z-index: 70;

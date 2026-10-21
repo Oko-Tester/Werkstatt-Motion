@@ -64,6 +64,7 @@ pub struct UiPreferences {
 
 /// Eingabe für ein neues Fahrzeug. Statusfelder dürfen bereits gesetzt sein,
 /// weil die Entwurfszeile im Frontend vor dem Speichern umgeschaltet werden kann.
+/// Ein Termin kann gleich beim Anlegen mitgegeben werden.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewVehicle {
@@ -82,6 +83,8 @@ pub struct NewVehicle {
     pub parts_arrived: bool,
     #[serde(default)]
     pub is_done: bool,
+    #[serde(default)]
+    pub appointment_at: Option<String>,
 }
 
 /// Teil-Aktualisierung der Textfelder eines Fahrzeugs.

@@ -22,6 +22,8 @@ function isVehicleDraftComplete(draft: VehicleDraft): boolean {
   );
 }
 
+// Ein Termin allein hält eine neue Zeile nicht am Leben: Ohne Kunde wird sie beim
+// Verlassen wie eine leere Zeile verworfen.
 function isVehicleDraftEmpty(draft: VehicleDraft): boolean {
   return (
     draft.customerName.trim() === "" &&
@@ -136,6 +138,7 @@ export function useVehicles({ feedback, drafts, refreshCustomerSuggestions }: Ve
       partsOrdered: false,
       partsArrived: false,
       isDone: false,
+      appointmentAt: null,
     };
     // Suche leeren, damit die neue Zeile sicher sichtbar ist.
     setSearch("");
@@ -166,6 +169,7 @@ export function useVehicles({ feedback, drafts, refreshCustomerSuggestions }: Ve
         partsOrdered: draft.partsOrdered,
         partsArrived: draft.partsArrived,
         isDone: draft.isDone,
+        appointmentAt: draft.appointmentAt,
       });
       setVehicleDrafts((prev) => prev.filter((entry) => entry.draftId !== draft.draftId));
       clearFieldError(draft.draftId);
@@ -173,7 +177,12 @@ export function useVehicles({ feedback, drafts, refreshCustomerSuggestions }: Ve
       void refreshCustomerSuggestions();
     } catch (err) {
       const apiErr = toApiError(err);
-      setFieldError(draft.draftId, apiErr.field ?? "customerName", apiErr.message);
+      if (apiErr.field === "appointmentAt") {
+        // Der Termin hat kein eigenes Fehlerfeld in der Zeile.
+        showNotice(apiErr.message);
+      } else {
+        setFieldError(draft.draftId, apiErr.field ?? "customerName", apiErr.message);
+      }
     } finally {
       creatingRef.current.delete(draft.draftId);
     }
@@ -186,6 +195,13 @@ export function useVehicles({ feedback, drafts, refreshCustomerSuggestions }: Ve
     window.setTimeout(() => {
       const draft = vehicleDraftsRef.current.find((entry) => entry.draftId === draftId);
       if (!draft || creatingRef.current.has(draftId)) {
+        return;
+      }
+      // Liegt der Fokus schon wieder in der Zeile (z. B. nach dem Schließen der
+      // Terminauswahl per Klick auf ein Feld), wurde sie nicht verlassen. Bei einem
+      // Fensterwechsel ohne Fokus im Dokument gilt die Zeile weiterhin als verlassen.
+      const row = document.querySelector(`tr[data-row-id="${draftId}"]`);
+      if (document.hasFocus() && row?.contains(document.activeElement)) {
         return;
       }
       if (isVehicleDraftEmpty(draft)) {
@@ -249,6 +265,12 @@ export function useVehicles({ feedback, drafts, refreshCustomerSuggestions }: Ve
   }
 
   function changeVehicleAppointment(id: string, appointmentAt: string | null) {
+    if (isDraftId(id)) {
+      // Der Termin darf vor dem Kunden gewählt werden. Er wird mit der Zeile
+      // gespeichert, sobald Kunde und Fahrzeug eingetragen sind.
+      updateVehicleDraft(id, { appointmentAt });
+      return;
+    }
     const previous = vehiclesRef.current.find((vehicle) => vehicle.id === id);
     if (previous === undefined || previous.appointmentAt === appointmentAt) return;
     const saveVersion = (appointmentSaveVersionRef.current.get(id) ?? 0) + 1;
