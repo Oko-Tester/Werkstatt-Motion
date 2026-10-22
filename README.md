@@ -201,6 +201,8 @@ ausschließlich ihre eigenen täglichen Dateien.
 Alles andere im gewählten Ordner bleibt unberührt, und mehrere Computer können
 sich einen Stick teilen. Die erste Kopie entsteht gleich nach dem Einrichten.
 
+![Werkstatt Motion: Einstellungen mit Datensicherung, zweitem Speicherort und aufgeklapptem Info-Knopf](docs/images/werkstatt-motion-einstellungen.png)
+
 Außer diesem eigenen Ordner legt die App im zweiten Speicherort nie etwas an. Ist
 der USB-Stick nicht eingesteckt oder das Netzlaufwerk nicht verbunden – oder steckt
 am selben Laufwerksbuchstaben ein anderer Datenträger –, schreibt sie nichts auf ein
