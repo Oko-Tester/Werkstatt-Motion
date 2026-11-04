@@ -4594,7 +4594,9 @@ dependencies = [
  "chacha20poly1305",
  "hkdf",
  "keyring",
+ "reqwest",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
@@ -4604,6 +4606,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tempfile",
+ "tokio",
  "uuid",
  "zeroize",
 ]

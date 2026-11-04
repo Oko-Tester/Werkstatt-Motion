@@ -48,13 +48,13 @@ describe("Einstellungen", () => {
   it("zeigt für Bereiche ohne Einstellungen einen Hinweis und wechselt die Auswahl", async () => {
     const { user, list } = await openSettings();
 
-    await user.click(within(list).getByRole("button", { name: "Kalender" }));
+    await user.click(within(list).getByRole("button", { name: "Historie" }));
 
-    const detail = screen.getByRole("region", { name: "Einstellungen für Kalender" });
+    const detail = screen.getByRole("region", { name: "Einstellungen für Historie" });
     expect(
       within(detail).getByText("Für diesen Bereich gibt es noch keine Einstellungen."),
     ).toBeInTheDocument();
-    expect(within(list).getByRole("button", { name: "Kalender" })).toHaveAttribute(
+    expect(within(list).getByRole("button", { name: "Historie" })).toHaveAttribute(
       "aria-current",
       "true",
     );

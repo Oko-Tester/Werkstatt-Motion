@@ -8,11 +8,13 @@ use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
+use zeroize::Zeroizing;
 
 use crate::backup::{self, BackupStatus, ValidatedBackup, BACKUP_FILE_EXTENSION};
 use crate::crypto::{self, SecretKey};
 use crate::db;
 use crate::error::ApiError;
+use crate::google::{self, ClientCredentials, GoogleState, GoogleStatus, ReqwestApi, Urls};
 use crate::hidden;
 use crate::keys::{self, KeyMaterial, KeyStore};
 use crate::models::{
@@ -140,6 +142,8 @@ pub struct StoragePaths {
     pub backups_dir: PathBuf,
     /// Backup-Einstellungen (zweiter Speicherort), neben der Datenbank.
     pub settings_path: PathBuf,
+    /// Verbindung zu Google Kalender (ohne Geheimnisse), neben der Datenbank.
+    pub google_path: PathBuf,
 }
 
 /// Ordner der installierten Programmdatei. Bei einem AppImage zeigt
@@ -972,6 +976,187 @@ pub async fn confirm_restore(
 pub fn cancel_restore(vault: State<'_, Vault>) -> Result<(), ApiError> {
     vault.lock()?.staged = None;
     Ok(())
+}
+
+// ---------- Google Kalender ----------
+
+/// Das Anmelde-Token für Google im Schlüsselspeicher, über die gemeinsame
+/// Schlüsselverwaltung. Gesperrt wird nur für den einzelnen Zugriff, nie über einen
+/// Netzaufruf hinweg.
+struct VaultTokens<'a>(&'a Vault);
+
+impl google::TokenStore for VaultTokens<'_> {
+    fn load(&self) -> Result<Option<Zeroizing<String>>, ApiError> {
+        self.0.lock()?.store.read(google::TOKEN_ENTRY)
+    }
+
+    fn save(&self, token: &str) -> Result<(), ApiError> {
+        self.0.lock()?.store.write(google::TOKEN_ENTRY, token)
+    }
+
+    fn clear(&self) -> Result<(), ApiError> {
+        self.0.lock()?.store.delete(google::TOKEN_ENTRY)
+    }
+}
+
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+/// Die Fahrzeuge zum Abgleich. Lässt sich die Datenbank nicht lesen, ist das ein Fehler –
+/// nie eine leere Liste, die bei Google alle Termine löschen würde.
+fn vehicle_snapshot(db: &Db) -> Result<Vec<Vehicle>, ApiError> {
+    let state = db.lock()?;
+    db::list_vehicles(state.conn()?)
+}
+
+fn google_status_from(paths: &StoragePaths, vehicles: &[Vehicle]) -> GoogleStatus {
+    let settings = google::load_settings(&paths.google_path);
+    google::build_status(&settings, google::client_credentials().is_some(), vehicles)
+}
+
+fn google_api() -> Result<ReqwestApi, ApiError> {
+    Ok(ReqwestApi::new(Urls::google())?)
+}
+
+/// Stand der Verbindung zu Google Kalender samt Vorschau der Termine.
+#[tauri::command]
+pub async fn google_status(
+    db: State<'_, Db>,
+    paths: State<'_, StoragePaths>,
+) -> Result<GoogleStatus, ApiError> {
+    let vehicles = vehicle_snapshot(&db).unwrap_or_default();
+    Ok(google_status_from(&paths, &vehicles))
+}
+
+/// Meldet die App bei Google an: öffnet den Browser und wartet auf die Rückleitung,
+/// danach folgt der erste Abgleich. Bricht der Nutzer ab, bleibt alles, wie es war.
+#[tauri::command]
+pub async fn google_connect(
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    paths: State<'_, StoragePaths>,
+    google_state: State<'_, GoogleState>,
+) -> Result<GoogleStatus, ApiError> {
+    let creds = google::client_credentials().ok_or_else(|| {
+        ApiError::google("In dieser Version ist die Verbindung zu Google nicht eingerichtet.")
+    })?;
+    let _gate = google_state.gate.lock().await;
+    let api = google_api()?;
+    let tokens = VaultTokens(&vault);
+    let ctx = google::Context {
+        api: &api,
+        creds: &creds,
+        tokens: &tokens,
+        settings_path: &paths.google_path,
+    };
+    google::connect(
+        &ctx,
+        || vehicle_snapshot(&db),
+        &google_state,
+        |url| {
+            // Öffnet sich kein Browser, bleibt die Adresse in den Einstellungen zum Kopieren.
+            let _ = google::open_in_browser(url);
+        },
+        google::CONNECT_TIMEOUT,
+        now_seconds(),
+    )
+    .await?;
+    let vehicles = vehicle_snapshot(&db).unwrap_or_default();
+    Ok(google_status_from(&paths, &vehicles))
+}
+
+/// Die Adresse der laufenden Anmeldung, falls sich der Browser nicht von selbst öffnet.
+#[tauri::command]
+pub fn google_pending_url(google_state: State<'_, GoogleState>) -> Option<String> {
+    google_state.pending_url()
+}
+
+/// Bricht eine laufende Anmeldung ab.
+#[tauri::command]
+pub fn google_cancel_connect(google_state: State<'_, GoogleState>) {
+    google_state.cancel();
+}
+
+/// Gleicht ab, falls verbunden. Läuft schon ein Abgleich oder eine Anmeldung, zählt deren
+/// Ergebnis; ein Fehlschlag steht danach im Stand, nicht als Fehler des Befehls.
+#[tauri::command]
+pub async fn google_sync(
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    paths: State<'_, StoragePaths>,
+    google_state: State<'_, GoogleState>,
+) -> Result<GoogleStatus, ApiError> {
+    let gate = google_state.gate.try_lock();
+    let (Some(creds), Ok(_gate)) = (google::client_credentials(), gate) else {
+        let vehicles = vehicle_snapshot(&db).unwrap_or_default();
+        return Ok(google_status_from(&paths, &vehicles));
+    };
+    let vehicles = vehicle_snapshot(&db)?;
+    let api = google_api()?;
+    let tokens = VaultTokens(&vault);
+    let ctx = google::Context {
+        api: &api,
+        creds: &creds,
+        tokens: &tokens,
+        settings_path: &paths.google_path,
+    };
+    google::sync_now(&ctx, &vehicles, now_seconds()).await?;
+    Ok(google_status_from(&paths, &vehicles))
+}
+
+/// Merkt sich, was in den Terminen bei Google steht (`short` oder `full`). Die Vorschau im
+/// Ergebnis zeigt es sofort; bei Google kommt es mit dem nächsten Abgleich an.
+#[tauri::command]
+pub async fn google_set_content(
+    content: String,
+    db: State<'_, Db>,
+    paths: State<'_, StoragePaths>,
+    google_state: State<'_, GoogleState>,
+) -> Result<GoogleStatus, ApiError> {
+    let content = google::Content::parse(&content)
+        .ok_or_else(|| ApiError::validation("content", "Unbekannte Auswahl für den Inhalt"))?;
+    // Ein laufender Abgleich schreibt seinen Stand am Ende; erst danach die Wahl speichern.
+    let _gate = google_state.gate.lock().await;
+    let mut settings = google::load_settings(&paths.google_path);
+    settings.content = content;
+    google::save_settings(&paths.google_path, &settings)?;
+    let vehicles = vehicle_snapshot(&db).unwrap_or_default();
+    Ok(google_status_from(&paths, &vehicles))
+}
+
+/// Trennt die Verbindung. Mit `delete_calendar` löscht die App vorher ihren Kalender bei
+/// Google; gelingt das nicht, bleibt die Verbindung bestehen und der Fehler kommt zurück.
+#[tauri::command]
+pub async fn google_disconnect(
+    delete_calendar: bool,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    paths: State<'_, StoragePaths>,
+    google_state: State<'_, GoogleState>,
+) -> Result<GoogleStatus, ApiError> {
+    let _gate = google_state.gate.lock().await;
+    let creds = google::client_credentials();
+    // Ohne Zugangs-ID (etwa nach dem Wechsel auf eine Version ohne) kann die App bei Google
+    // nichts mehr löschen, aber hier aufräumen.
+    let fallback = ClientCredentials {
+        id: String::new(),
+        secret: String::new(),
+    };
+    let api = google_api()?;
+    let tokens = VaultTokens(&vault);
+    let ctx = google::Context {
+        api: &api,
+        creds: creds.as_ref().unwrap_or(&fallback),
+        tokens: &tokens,
+        settings_path: &paths.google_path,
+    };
+    google::disconnect(&ctx, delete_calendar && creds.is_some()).await?;
+    let vehicles = vehicle_snapshot(&db).unwrap_or_default();
+    Ok(google_status_from(&paths, &vehicles))
 }
 
 #[cfg(test)]

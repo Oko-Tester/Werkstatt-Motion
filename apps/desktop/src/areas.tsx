@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 import { CalendarPage } from "./pages/CalendarPage";
+import { CalendarSettings } from "./pages/CalendarSettings";
 import { HistoryPage } from "./pages/HistoryPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VehiclesPage } from "./pages/VehiclesPage";
@@ -85,6 +86,7 @@ export const AREAS: readonly Area[] = [
       </AreaIcon>
     ),
     Page: CalendarPage,
+    Settings: CalendarSettings,
   },
   {
     id: "history",

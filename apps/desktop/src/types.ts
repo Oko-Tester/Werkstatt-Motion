@@ -65,9 +65,41 @@ export interface ApiError {
     | "crypto"
     | "key_missing"
     | "keystore_unavailable"
-    | "backup";
+    | "backup"
+    | "google";
   message: string;
   field?: string;
+}
+
+/** Was in den Terminen bei Google steht: nur das Fahrzeug oder dazu Kunde und Kennzeichen. */
+export type GoogleContent = "short" | "full";
+
+/** Ein Termin, wie er im Google Kalender stehen würde. */
+export interface GooglePreviewEvent {
+  /** YYYY-MM-DD */
+  date: string;
+  /** HH:mm, ohne Uhrzeit `null` (dann ganztägig) */
+  time: string | null;
+  endTime: string | null;
+  title: string;
+}
+
+/** Stand der Verbindung zu Google Kalender. */
+export interface GoogleStatus {
+  /** Enthält diese Version die Google-Zugangs-ID? Sonst ist die Verbindung nicht verfügbar. */
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
+  content: GoogleContent;
+  /** Ende des letzten gelungenen Abgleichs (Sekunden seit 1970). */
+  lastSyncAt: number | null;
+  lastSyncCount: number | null;
+  /** Meldung des letzten misslungenen Abgleichs. */
+  lastError: string | null;
+  /** Der Zugang ist abgelaufen oder widerrufen: neu verbinden. */
+  needsReconnect: boolean;
+  /** Alle Termine, wie sie bei Google stehen würden, nach Zeit sortiert. */
+  events: GooglePreviewEvent[];
 }
 
 /**

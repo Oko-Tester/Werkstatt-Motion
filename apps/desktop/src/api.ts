@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ApiError,
   CustomerSuggestion,
+  GoogleContent,
+  GoogleStatus,
   HiddenEntry,
   HiddenStatus,
   Payment,
@@ -302,6 +304,46 @@ export function confirmRestore(): Promise<void> {
 
 export function cancelRestore(): Promise<void> {
   return invoke("cancel_restore");
+}
+
+// ---------- Google Kalender (nur App → Google) ----------
+
+export function getGoogleStatus(): Promise<GoogleStatus> {
+  return invoke("google_status");
+}
+
+/**
+ * Öffnet die Anmeldung bei Google im Browser und wartet, bis sie fertig oder abgebrochen
+ * ist (bis zu fünf Minuten). Danach folgt gleich der erste Abgleich.
+ */
+export function connectGoogle(): Promise<GoogleStatus> {
+  return invoke("google_connect");
+}
+
+/** Die Adresse der laufenden Anmeldung, falls sich der Browser nicht von selbst öffnet. */
+export function getGooglePendingUrl(): Promise<string | null> {
+  return invoke("google_pending_url");
+}
+
+export function cancelGoogleConnect(): Promise<void> {
+  return invoke("google_cancel_connect");
+}
+
+/** Gleicht ab, falls verbunden; ein Fehlschlag steht danach in `lastError`. */
+export function syncGoogle(): Promise<GoogleStatus> {
+  return invoke("google_sync");
+}
+
+export function setGoogleContent(content: GoogleContent): Promise<GoogleStatus> {
+  return invoke("google_set_content", { content });
+}
+
+/**
+ * Trennt die Verbindung. Mit `deleteCalendar` löscht die App vorher ihren Kalender bei
+ * Google; gelingt das nicht, bleibt die Verbindung bestehen und der Befehl scheitert.
+ */
+export function disconnectGoogle(deleteCalendar: boolean): Promise<GoogleStatus> {
+  return invoke("google_disconnect", { deleteCalendar });
 }
 
 /** Macht aus einem unbekannten Fehler einen anzeigbaren ApiError. */
