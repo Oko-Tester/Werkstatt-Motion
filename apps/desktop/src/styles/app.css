@@ -1813,6 +1813,87 @@ input {
   color: var(--color-danger);
 }
 
+/* ---------- Google Kalender ---------- */
+
+/* Karte und Zeilen wie bei der Datensicherung; dazu der Hinweis ohne Zugangs-ID, die
+   Adresse zum Kopieren, die Bestätigung beim Trennen und die Vorschau der Termine. */
+.google-unavailable {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.google-url {
+  flex: 1 1 100%;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: var(--font-size-caption);
+}
+
+.google-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-attention-border);
+  border-radius: var(--radius);
+  background: var(--color-attention-soft);
+}
+
+.google-confirm p {
+  flex: 1 1 260px;
+  margin: 0;
+  color: var(--color-attention);
+}
+
+.google-preview {
+  margin-top: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.google-preview-title {
+  margin: 0;
+  padding: var(--space-1) 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.google-preview ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.google-preview li {
+  display: grid;
+  grid-template-columns: 76px 104px minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.google-preview-meta {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.google-preview-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- Info-Knopf ---------- */
 
 .info-tip {

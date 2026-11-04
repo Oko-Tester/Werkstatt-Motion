@@ -19,6 +19,8 @@ pub trait KeyStore: Send + Sync {
     /// abgeleitet werden.
     fn read(&self, entry: &str) -> Result<Option<Zeroizing<String>>, ApiError>;
     fn write(&self, entry: &str, value: &str) -> Result<(), ApiError>;
+    /// Entfernt einen Eintrag. Ein Eintrag, den es nicht gibt, ist kein Fehler.
+    fn delete(&self, entry: &str) -> Result<(), ApiError>;
 }
 
 /// Produktivimplementierung über das `keyring`-Crate.
@@ -40,6 +42,15 @@ impl KeyStore for OsKeyStore {
             keyring::Entry::new(SERVICE, entry).map_err(|_| ApiError::keystore_unavailable())?;
         item.set_password(value)
             .map_err(|_| ApiError::keystore_unavailable())
+    }
+
+    fn delete(&self, entry: &str) -> Result<(), ApiError> {
+        let item =
+            keyring::Entry::new(SERVICE, entry).map_err(|_| ApiError::keystore_unavailable())?;
+        match item.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err(ApiError::keystore_unavailable()),
+        }
     }
 }
 
@@ -175,6 +186,14 @@ pub mod tests {
                 .lock()
                 .unwrap()
                 .insert(entry.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, entry: &str) -> Result<(), ApiError> {
+            if self.fail_write.load(Ordering::SeqCst) {
+                return Err(ApiError::keystore_unavailable());
+            }
+            self.entries.lock().unwrap().remove(entry);
             Ok(())
         }
     }

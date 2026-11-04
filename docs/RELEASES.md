@@ -22,6 +22,14 @@ werden. Zusätzlich sollte er sicher außerhalb des Rechners gesichert werden.
 Ohne diesen Schlüssel können bereits installierte Apps keine zukünftigen
 Updates mehr verifizieren.
 
+### Google Kalender (optional)
+
+Für die Verbindung zu Google Kalender zwei weitere Repository-Secrets anlegen:
+`WERKSTATT_GOOGLE_CLIENT_ID` und `WERKSTATT_GOOGLE_CLIENT_SECRET`. Woher die Werte
+kommen, steht in [google-kalender.md](google-kalender.md). Fehlen die Secrets, baut
+der Workflow die App ohne Google-Anbindung; in den Einstellungen steht dann „In
+dieser Version nicht verfügbar“.
+
 ## Neues Release
 
 1. Die Version in diesen Dateien identisch erhöhen:
@@ -72,4 +80,5 @@ pnpm --filter @werkstatt/desktop tauri build --ci
 ```
 
 Das normale Programm bleibt ohne Internet vollständig nutzbar. Nur die manuell
-ausgelöste Update-Suche benötigt eine Verbindung zu GitHub.
+ausgelöste Update-Suche benötigt eine Verbindung zu GitHub, und die freiwillige
+Verbindung zu Google Kalender eine zu Google.

@@ -63,6 +63,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # Google Kalender (optional, siehe docs/google-kalender.md). Ohne diese
+          # Secrets entsteht die App ohne Google-Anbindung.
+          WERKSTATT_GOOGLE_CLIENT_ID: ${{ secrets.WERKSTATT_GOOGLE_CLIENT_ID }}
+          WERKSTATT_GOOGLE_CLIENT_SECRET: ${{ secrets.WERKSTATT_GOOGLE_CLIENT_SECRET }}
         with:
           projectPath: apps/desktop
           tauriScript: pnpm tauri

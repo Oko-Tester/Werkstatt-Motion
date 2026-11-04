@@ -5,6 +5,7 @@ mod commands;
 mod crypto;
 mod db;
 mod error;
+mod google;
 mod hidden;
 mod keys;
 mod models;
@@ -15,6 +16,7 @@ use tauri::Manager;
 
 use commands::{Db, DbState, SecretSessions, StoragePaths, Vault, VaultState};
 use error::ApiError;
+use google::GoogleState;
 use keys::KeyStore;
 
 fn main() {
@@ -85,10 +87,12 @@ fn main() {
                 staged: None,
             })));
             app.manage(SecretSessions::default());
+            app.manage(GoogleState::default());
             app.manage(StoragePaths {
                 db_path,
                 backups_dir: data_dir.join("backups"),
                 settings_path: data_dir.join(backup::BACKUP_SETTINGS_FILE),
+                google_path: data_dir.join(google::SETTINGS_FILE),
             });
             Ok(())
         })
@@ -135,6 +139,13 @@ fn main() {
             commands::prepare_restore,
             commands::confirm_restore,
             commands::cancel_restore,
+            commands::google_status,
+            commands::google_connect,
+            commands::google_pending_url,
+            commands::google_cancel_connect,
+            commands::google_sync,
+            commands::google_set_content,
+            commands::google_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("Fehler beim Starten der Tauri-Anwendung");

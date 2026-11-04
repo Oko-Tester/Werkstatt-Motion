@@ -13,6 +13,7 @@ Keine verschachtelten Menüs, kein unnötiger Papierkram – einfach öffnen und
 
 - Fahrzeuge und Kunden übersichtlich verwalten
 - Werkstatttermine direkt am Fahrzeug planen und im Kalender überblicken
+- Termine auf Wunsch im Google Kalender ansehen, etwa auf dem Handy
 - Arbeitsstand mit einem Klick markieren
 - TÜV und bestellte Teile im Blick behalten
 - Offene Zahlungen direkt sehen und als bezahlt markieren
@@ -93,6 +94,21 @@ Fahrzeugliste sind unmittelbar auch im Kalender sichtbar.
 Terminen und abgeschlossenen Vorgängen wechseln.
 
 ![Werkstatt Motion mit Monatskalender sowie den Ansichten Kalender und Historie](docs/images/werkstatt-motion-kalender.png)
+
+### Termine im Google Kalender ansehen
+
+Unter **„Einstellungen“ › „Kalender“** verbindet **„Mit Google verbinden“** die App
+mit einem Google-Konto. Die Anmeldung läuft im Browser; danach legt die App dort
+einen eigenen Kalender **„Werkstatt Motion“** an und trägt die Termine ein – nur in
+diese Richtung, zum Ansehen etwa auf dem Handy. Eingetragen wird weiter in der App.
+Abgeglichen wird beim Start, stündlich und mit **„Jetzt abgleichen“**. Ein Termin
+mit Uhrzeit steht dort für eine Stunde, einer ohne Uhrzeit ganztägig.
+
+In den Terminen steht zunächst nur das Fahrzeug. Kunde und Kennzeichen kommen nur
+mit der Wahl **„Mit Kunde und Kennzeichen“** dazu, Notizen nie. **„Trennen“** löscht
+den Kalender bei Google wieder. Die Verbindung ist freiwillig; ohne sie bleibt alles
+auf diesem Computer. Wer die App selbst baut, findet die nötige Einrichtung bei
+Google in [docs/google-kalender.md](docs/google-kalender.md).
 
 ### Historie öffnen
 

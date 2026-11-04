@@ -2,6 +2,9 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import type {
   ApiError,
   CustomerSuggestion,
+  GoogleContent,
+  GooglePreviewEvent,
+  GoogleStatus,
   HiddenEntry,
   Payment,
   SecretHistoryEntry,
@@ -68,6 +71,31 @@ export interface FakeBackupConfig {
   secondLastAt: number | null;
 }
 
+const GOOGLE_RECONNECT =
+  "Die Verbindung zu Google ist abgelaufen oder wurde widerrufen. Bitte neu verbinden.";
+
+/** Zustand der Verbindung zu Google Kalender im Fake; Tests stellen ihn vor dem Rendern ein. */
+export interface FakeGoogleConfig {
+  /** Enthält die Version eine Google-Zugangs-ID? */
+  configured: boolean;
+  /** Das verbundene Konto; `null`: nicht verbunden. */
+  email: string | null;
+  content: GoogleContent;
+  /** Sekunden seit 1970. */
+  lastSyncAt: number | null;
+  lastSyncCount: number | null;
+  lastError: string | null;
+  needsReconnect: boolean;
+  /** Meldung, die jeder Abgleich in den Stand schreibt (etwa ohne Netz); `null`: gelingt. */
+  syncError: string | null;
+  /** Fehler beim Löschen des Kalenders bei Google (Trennen); `null`: gelingt. */
+  disconnectError: ApiError | null;
+  /** Adresse der laufenden Anmeldung. */
+  pendingUrl: string | null;
+  /** Wurde der Kalender „Werkstatt Motion“ bei Google gelöscht? */
+  calendarDeleted: boolean;
+}
+
 export interface FakeBackend {
   vehicles: Vehicle[];
   vehicleHistory: VehicleHistory[];
@@ -91,6 +119,12 @@ export interface FakeBackend {
    * zurückgegebene Funktion gibt ihn wieder frei.
    */
   holdDailyBackup: () => () => void;
+  google: FakeGoogleConfig;
+  /**
+   * Beendet die wartende Anmeldung bei Google, als käme der Browser zurück: verbunden
+   * (Standardkonto „kollege@gmail.com“) oder mit dem übergebenen Fehler.
+   */
+  finishGoogleConnect: (result?: { email?: string } | ApiError) => void;
 }
 
 function validationError(field: string, message: string): ApiError {
@@ -334,6 +368,79 @@ export function installFakeBackend(seed?: {
   const cancels = new Set<string>();
   let dailyBackupHold: Promise<void> | null = null;
   const activeSessionTokens = new Set<string>();
+
+  const google: FakeGoogleConfig = {
+    configured: true,
+    email: null,
+    content: "short",
+    lastSyncAt: null,
+    lastSyncCount: null,
+    lastError: null,
+    needsReconnect: false,
+    syncError: null,
+    disconnectError: null,
+    pendingUrl: null,
+    calendarDeleted: false,
+  };
+  let pendingGoogleConnect: {
+    resolve: (status: GoogleStatus) => void;
+    reject: (error: ApiError) => void;
+  } | null = null;
+
+  /** Wie im Rust-Backend: 1 Stunde, ohne Uhrzeit ganztägig, knapp nur das Fahrzeug. */
+  function googleEvents(): GooglePreviewEvent[] {
+    return vehicles
+      .filter((vehicle) => vehicle.archivedAt === null && vehicle.appointmentAt !== null)
+      .slice()
+      .sort((left, right) =>
+        (left.appointmentAt as string).localeCompare(right.appointmentAt as string),
+      )
+      .map((vehicle) => {
+        const at = vehicle.appointmentAt as string;
+        const time = at.length > 10 ? at.slice(11, 16) : null;
+        const endTime =
+          time === null
+            ? null
+            : `${String((Number(time.slice(0, 2)) + 1) % 24).padStart(2, "0")}${time.slice(2)}`;
+        const car = vehicle.vehicleName.trim();
+        let title = car;
+        if (google.content === "full") {
+          title = [vehicle.customerName.trim(), car].filter(Boolean).join(" – ");
+          const plate = vehicle.licensePlate.trim();
+          if (plate !== "") title = title === "" ? plate : `${title} · ${plate}`;
+        }
+        return { date: at.slice(0, 10), time, endTime, title: title || "Werkstatttermin" };
+      });
+  }
+
+  function googleStatus(): GoogleStatus {
+    return {
+      configured: google.configured,
+      connected: google.email !== null,
+      email: google.email,
+      content: google.content,
+      lastSyncAt: google.lastSyncAt,
+      lastSyncCount: google.lastSyncCount,
+      lastError: google.lastError,
+      needsReconnect: google.needsReconnect,
+      events: googleEvents(),
+    };
+  }
+
+  function googleSync() {
+    if (!google.configured || google.email === null) return;
+    if (google.needsReconnect) {
+      google.lastError = GOOGLE_RECONNECT;
+      return;
+    }
+    if (google.syncError !== null) {
+      google.lastError = google.syncError;
+      return;
+    }
+    google.lastSyncAt = Math.floor(Date.now() / 1000);
+    google.lastSyncCount = googleEvents().length;
+    google.lastError = null;
+  }
 
   function requireHiddenAccess() {
     if (seed?.hiddenError) throw seed.hiddenError;
@@ -977,6 +1084,51 @@ export function installFakeBackend(seed?: {
       case "cancel_restore":
         stagedRestore = null;
         return null;
+      case "google_status":
+        return googleStatus();
+      case "google_connect": {
+        if (!google.configured) {
+          throw {
+            code: "google",
+            message: "In dieser Version ist die Verbindung zu Google nicht eingerichtet.",
+          };
+        }
+        google.pendingUrl = "https://accounts.google.com/o/oauth2/v2/auth?client_id=test";
+        return new Promise<GoogleStatus>((resolve, reject) => {
+          pendingGoogleConnect = { resolve, reject };
+        });
+      }
+      case "google_pending_url":
+        return google.pendingUrl;
+      case "google_cancel_connect": {
+        const pending = pendingGoogleConnect;
+        pendingGoogleConnect = null;
+        google.pendingUrl = null;
+        pending?.resolve(googleStatus());
+        return null;
+      }
+      case "google_sync":
+        googleSync();
+        return googleStatus();
+      case "google_set_content": {
+        const content = args.content;
+        if (content !== "short" && content !== "full") {
+          throw validationError("content", "Unbekannte Auswahl für den Inhalt");
+        }
+        google.content = content;
+        return googleStatus();
+      }
+      case "google_disconnect": {
+        const deleteCalendar = args.deleteCalendar === true;
+        if (deleteCalendar && google.disconnectError !== null) throw google.disconnectError;
+        if (deleteCalendar) google.calendarDeleted = true;
+        google.email = null;
+        google.lastSyncAt = null;
+        google.lastSyncCount = null;
+        google.lastError = null;
+        google.needsReconnect = false;
+        return googleStatus();
+      }
       default:
         throw notFound(`Unbekannter Command: ${cmd}`);
     }
@@ -1007,6 +1159,21 @@ export function installFakeBackend(seed?: {
         release = resolve;
       });
       return release;
+    },
+    google,
+    finishGoogleConnect: (result) => {
+      const pending = pendingGoogleConnect;
+      pendingGoogleConnect = null;
+      google.pendingUrl = null;
+      if (pending === null) throw new Error("Es wartet keine Anmeldung bei Google");
+      if (result !== undefined && "code" in result) {
+        pending.reject(result);
+        return;
+      }
+      google.email = result?.email ?? "kollege@gmail.com";
+      google.needsReconnect = false;
+      googleSync();
+      pending.resolve(googleStatus());
     },
   };
 }

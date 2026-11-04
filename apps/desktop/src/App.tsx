@@ -15,6 +15,7 @@ import * as updates from "./updates";
 import type { UpdateProgress } from "./updates";
 
 const DAILY_BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const GOOGLE_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 
 interface AppProps {
   /** Die Bereiche der Leiste. Standard ist die Bereichsliste; Tests setzen eigene ein. */
@@ -85,6 +86,44 @@ function AppFrame({ areas }: { areas: readonly Area[] }) {
       window.clearInterval(timer);
     };
     // Der Backend-Command ist idempotent und entscheidet anhand des lokalen Datums.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let running = false;
+    // Ohne Netz bleibt es still (der nächste Lauf holt alles nach, der Stand steht in den
+    // Einstellungen). Ist der Zugang abgelaufen, hilft nur der Nutzer: einmal pro Tag sagen.
+    let lastReconnectNoticeDay = "";
+
+    function syncGoogle() {
+      if (running) return;
+      running = true;
+      void api
+        .syncGoogle()
+        .then((status) => {
+          const today = new Date().toDateString();
+          if (active && status.connected && status.needsReconnect && today !== lastReconnectNoticeDay) {
+            showNotice(
+              "Google Kalender: Die Verbindung ist abgelaufen. Bitte unter Einstellungen › Kalender neu verbinden.",
+            );
+            lastReconnectNoticeDay = today;
+          }
+        })
+        .catch(() => {
+          // Ein Fehler hier ist nur ein ausgelassener Lauf; die Einstellungen zeigen den Stand.
+        })
+        .finally(() => {
+          running = false;
+        });
+    }
+
+    syncGoogle();
+    const timer = window.setInterval(syncGoogle, GOOGLE_SYNC_INTERVAL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

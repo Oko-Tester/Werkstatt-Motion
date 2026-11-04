@@ -24,6 +24,8 @@ pub enum ErrorCode {
     KeystoreUnavailable,
     /// Backup ist ungültig, beschädigt oder nicht lesbar.
     Backup,
+    /// Verbindung zu Google (Anmeldung, Kalender-Abgleich) nicht möglich.
+    Google,
 }
 
 impl ApiError {
@@ -83,6 +85,14 @@ impl ApiError {
     pub fn backup(message: &str) -> Self {
         Self {
             code: ErrorCode::Backup,
+            message: message.to_string(),
+            field: None,
+        }
+    }
+
+    pub fn google(message: &str) -> Self {
+        Self {
+            code: ErrorCode::Google,
             message: message.to_string(),
             field: None,
         }
