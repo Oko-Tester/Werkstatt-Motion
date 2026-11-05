@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Datenschutzerklärung – Werkstatt Motion</title>
+    <meta name="description" content="Datenschutzerklärung für die App Werkstatt Motion und diese Webseite." />
+    <link rel="icon" type="image/png" href="images/logo.png" />
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a href="./" aria-label="Werkstatt Motion – Startseite">
+          <img src="images/logo-readme.png" alt="Werkstatt Motion" />
+        </a>
+        <nav class="site-nav" aria-label="Seiten">
+          <a href="./">Startseite</a>
+          <a href="nutzungsbedingungen.html">Nutzungsbedingungen</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <article class="legal">
+        <h1>Datenschutzerklärung</h1>
+        <p class="stand">Stand: 5. November 2026</p>
+
+        <h2>Kurz gesagt</h2>
+        <ul>
+          <li>
+            Werkstatt Motion ist eine Desktop-App. Alle Daten, die Sie darin eintragen, liegen auf
+            Ihrem Computer. Der Entwickler betreibt keine Server und erhält keine Daten aus der App.
+          </li>
+          <li>
+            Nur wenn Sie die App ausdrücklich mit Google Kalender verbinden, gehen Termindaten an
+            Google – direkt von Ihrem Computer, nicht über den Entwickler.
+          </li>
+          <li>Die App enthält keine Werbung, keine Analyse- und keine Tracking-Werkzeuge.</li>
+        </ul>
+
+        <h2>Verantwortlich</h2>
+        <!-- VOR DEM VERÖFFENTLICHEN AUSFÜLLEN: Name, Anschrift und E-Mail des Betreibers. -->
+        <p class="placeholder">
+          [Vor- und Nachname]<br />
+          [Straße und Hausnummer, PLZ Ort]<br />
+          E-Mail: [E-Mail-Adresse]
+        </p>
+        <p>
+          Fragen und Hinweise zur App gern auch über die
+          <a href="https://github.com/Oko-Tester/Werkstatt-Motion/issues">Issues auf GitHub</a>.
+          Für die Daten, die eine Werkstatt in der App über ihre Kundinnen und Kunden speichert, ist
+          die jeweilige Werkstatt selbst verantwortlich.
+        </p>
+
+        <h2>Daten in der App</h2>
+        <p>
+          In der App tragen Sie Fahrzeuge, Kundennamen, Kennzeichen, Notizen, Termine und offene
+          Beträge ein; Einträge im versteckten Bereich speichert die App verschlüsselt. Alles liegt
+          in einer Datenbank im Anwendungsdatenverzeichnis Ihres Benutzerkontos. Sicherungen legt
+          die App auf demselben Computer an und, wenn Sie das einrichten, zusätzlich an einem selbst
+          gewählten Ort wie einem USB-Stick oder Netzlaufwerk.
+        </p>
+        <p>
+          Die App überträgt keine dieser Daten an den Entwickler oder an Dritte. Es gibt kein
+          Benutzerkonto, keine Telemetrie und keine Fehlerberichte, die nach außen gehen.
+        </p>
+        <p>
+          <strong>Update-Suche:</strong> Nur wenn Sie auf „Nach Updates suchen“ klicken, ruft die
+          App bei GitHub ab, ob es eine neue Version gibt, und lädt sie auf Ihren Wunsch herunter.
+          Dabei erhält GitHub (GitHub, Inc., USA) technisch notwendige Daten wie Ihre IP-Adresse;
+          es gilt die
+          <a href="https://docs.github.com/de/site-policy/privacy-policies/github-general-privacy-statement"
+            >Datenschutzerklärung von GitHub</a
+          >.
+        </p>
+
+        <h2>Verbindung mit Google Kalender (freiwillig)</h2>
+        <h3>Zweck</h3>
+        <p>
+          Auf Wunsch zeigt die App die Termine der Werkstatt in einem eigenen Kalender „Werkstatt
+          Motion“ im Google-Konto an, etwa um sie auf dem Handy zu sehen. Die Termine gehen nur in
+          diese Richtung: Die App liest keine Termine aus Google. Die Verbindung ist standardmäßig
+          aus und beginnt erst, wenn Sie unter Einstellungen › Kalender auf „Mit Google verbinden“
+          klicken und bei Google zustimmen.
+        </p>
+
+        <h3>Welche Berechtigungen die App bei Google anfragt</h3>
+        <ul>
+          <li>
+            <code>openid</code> und <code>email</code>: Die App liest die E-Mail-Adresse des
+            verbundenen Google-Kontos, um anzuzeigen, welches Konto verbunden ist. Die Adresse wird
+            nur auf Ihrem Computer gespeichert.
+          </li>
+          <li>
+            <code>https://www.googleapis.com/auth/calendar.app.created</code>: Die App legt den
+            Kalender „Werkstatt Motion“ an und erstellt, ändert und löscht darin Termine. Andere
+            Kalender des Kontos kann die App mit dieser Berechtigung weder lesen noch ändern.
+          </li>
+        </ul>
+
+        <h3>Welche Daten an Google gehen</h3>
+        <p>
+          Je Termin: Datum, Uhrzeit (ein Termin mit Uhrzeit dauert eine Stunde, einer ohne Uhrzeit
+          ist ganztägig) und die Bezeichnung des Fahrzeugs. Kundenname und Kennzeichen nur, wenn Sie
+          dafür ausdrücklich „Mit Kunde und Kennzeichen“ wählen. Damit die App ihre Termine
+          wiederfindet, speichert sie in jedem Termin außerdem eine technische Kennung des Fahrzeugs
+          und einen Prüfwert. Notizen, Beträge und Einträge des versteckten Bereichs gehen nie zu
+          Google.
+        </p>
+
+        <h3>Was auf Ihrem Computer gespeichert wird</h3>
+        <p>
+          Das Anmelde-Token für Google liegt im Schlüsselspeicher des Betriebssystems (unter Windows
+          in der Anmeldeinformationsverwaltung). Die E-Mail-Adresse des Kontos, die Kennung des
+          Kalenders und der Stand des letzten Abgleichs liegen in einer Datei neben der Datenbank.
+          Ihr Google-Passwort sieht die App nie; die Anmeldung läuft im Browser direkt bei Google.
+        </p>
+
+        <h3>Keine Weitergabe, eingeschränkte Nutzung</h3>
+        <p>
+          Die Daten gehen direkt von Ihrem Computer an Google. Der Entwickler erhält sie nicht, sie
+          werden nicht an Dritte weitergegeben und nicht für Werbung, Profilbildung oder das
+          Training von KI-Modellen verwendet.
+        </p>
+        <p>
+          Die Nutzung und Übertragung von Informationen, die Werkstatt Motion von Google-APIs
+          erhält, an andere Apps hält sich an die
+          <a href="https://developers.google.com/terms/api-services-user-data-policy"
+            >Google API Services User Data Policy</a
+          >, einschließlich der Anforderungen zur eingeschränkten Nutzung (Limited Use).
+        </p>
+        <p lang="en">
+          Werkstatt Motion’s use and transfer to any other app of information received from Google
+          APIs will adhere to the
+          <a href="https://developers.google.com/terms/api-services-user-data-policy"
+            >Google API Services User Data Policy</a
+          >, including the Limited Use requirements.
+        </p>
+
+        <h3>Dauer und Löschung</h3>
+        <p>
+          Die Verbindung besteht, bis Sie sie beenden. „Trennen“ in der App löscht den Kalender
+          „Werkstatt Motion“ bei Google, widerruft den Zugriff und entfernt das Anmelde-Token von
+          Ihrem Computer. Den Zugriff können Sie außerdem jederzeit in Ihrem Google-Konto unter
+          <a href="https://myaccount.google.com/permissions">Drittanbieter-Apps</a> entziehen.
+        </p>
+        <p>
+          Für die Verarbeitung bei Google gilt die
+          <a href="https://policies.google.com/privacy">Datenschutzerklärung von Google</a>. Google
+          verarbeitet Daten auch in den USA.
+        </p>
+
+        <h3>Hinweis für Werkstätten</h3>
+        <p>
+          Wer mit „Mit Kunde und Kennzeichen“ Kundendaten an Google überträgt, braucht dafür eine
+          Rechtsgrundlage, etwa die Einwilligung der Kundinnen und Kunden, und sollte das in der
+          eigenen Datenschutzerklärung erwähnen.
+        </p>
+
+        <h2>Diese Webseite</h2>
+        <p>
+          Diese Seiten liegen bei GitHub Pages (GitHub, Inc., USA). Beim Aufruf verarbeitet GitHub
+          technisch notwendige Daten wie Ihre IP-Adresse, um die Seiten auszuliefern und vor
+          Angriffen zu schützen; es gilt die
+          <a href="https://docs.github.com/de/site-policy/privacy-policies/github-general-privacy-statement"
+            >Datenschutzerklärung von GitHub</a
+          >. Rechtsgrundlage ist unser berechtigtes Interesse an einer sicheren Auslieferung der
+          Seiten (Art. 6 Abs. 1 lit. f DSGVO). Wir setzen keine Cookies und keine Analyse- oder
+          Tracking-Werkzeuge ein; die Seiten laden nichts von anderen Anbietern nach.
+        </p>
+
+        <h2>Ihre Rechte</h2>
+        <p>
+          Sie haben das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung,
+          Datenübertragbarkeit und Widerspruch (Art. 15 bis 21 DSGVO) sowie das Recht, sich bei einer
+          Datenschutz-Aufsichtsbehörde zu beschweren (Art. 77 DSGVO). Da der Entwickler aus der App
+          keine personenbezogenen Daten erhält, liegen solche Daten nur auf dem Computer der
+          jeweiligen Werkstatt und gegebenenfalls bei Google. Mit Anliegen zu Ihren Kundendaten
+          wenden Sie sich bitte an die Werkstatt.
+        </p>
+
+        <h2>Änderungen</h2>
+        <p>
+          Diese Erklärung wird angepasst, wenn sich die App ändert. Es gilt die jeweils hier
+          veröffentlichte Fassung.
+        </p>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>© 2026 Werkstatt Motion</span>
+        <span
+          ><a href="./">Startseite</a> · <a href="nutzungsbedingungen.html">Nutzungsbedingungen</a> ·
+          <a href="https://github.com/Oko-Tester/Werkstatt-Motion">GitHub</a></span
+        >
+      </div>
+    </footer>
+  </body>
+</html>
