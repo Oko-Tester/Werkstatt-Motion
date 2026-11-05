@@ -306,20 +306,204 @@ input {
 }
 
 /* Zweistufige Inline-Bestätigung der Wiederherstellung (kein Modal). */
-.restore-confirm,
-.update-confirm {
+.restore-confirm {
   display: flex;
   align-items: center;
   gap: var(--space-1);
 }
 
-.restore-confirm-text,
-.update-confirm-text {
+.restore-confirm-text {
   /* Passt zweizeilig auch in ein 1100 px breites Fenster. */
   max-width: 360px;
   color: var(--color-text-muted);
   font-size: var(--font-size-caption);
   line-height: 1.3;
+}
+
+/* Kleiner Knopf neben „⋯“, sobald eine neue Version bereitsteht. */
+.update-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.update-button:hover:not(:disabled) {
+  background: #dce8f5;
+  border-color: var(--color-primary);
+}
+
+.update-button svg {
+  flex: none;
+}
+
+/* Während Backup und Download zeigt der Knopf den Fortschritt. */
+.update-button.is-running {
+  cursor: progress;
+}
+
+/* Kurz gesperrt, solange eine andere Aktion läuft (Backup, Wiederherstellung). */
+.update-button:disabled:not(.is-running) {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.update-button-spinner {
+  animation: update-spin 900ms linear infinite;
+}
+
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-button-spinner {
+    animation: none;
+  }
+}
+
+/* ---------- Fenster (Modal) ---------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+  background: rgb(17 24 39 / 45%);
+}
+
+.modal {
+  width: min(500px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: 0 24px 60px rgb(20 28 38 / 28%);
+  animation: modal-in 140ms ease-out;
+}
+
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-title);
+  line-height: 1.3;
+}
+
+.modal-title svg {
+  flex: none;
+  color: var(--color-attention);
+}
+
+.modal p {
+  margin: 0 0 var(--space-1);
+}
+
+.modal-note {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
+  /* Fehlermeldungen mit langen Pfaden dürfen umbrechen. */
+  overflow-wrap: anywhere;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+.modal .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modal .btn-primary:disabled {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.modal .btn-secondary:disabled {
+  background: var(--color-surface);
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal {
+    animation: none;
+  }
+}
+
+/* Fenster „Backup vor dem Update fehlgeschlagen“. */
+.update-backup-own {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.modal .update-backup-result {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
+.update-backup-result.is-ok {
+  color: var(--color-success);
+}
+
+.update-backup-result.is-error {
+  color: var(--color-danger);
+}
+
+.update-backup-risk {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: 10px 12px;
+  border: 1px solid var(--color-attention-border);
+  border-radius: var(--radius);
+  background: var(--color-attention-soft);
+  color: var(--color-attention);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+.update-backup-risk input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-attention);
 }
 
 /* ---------- Suchfeld ---------- */

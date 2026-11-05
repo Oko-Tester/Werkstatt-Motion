@@ -1035,6 +1035,10 @@ export function installFakeBackend(seed?: {
         backupConfig.secondLastAt = Date.now();
         return { saved: true, path: `${backupConfig.secondDir}/manuell-test.werkstattbackup` };
       }
+      // Update-Suche des Updater-Plugins (Start und Menü): Standard ist „keine neue Version“.
+      // Tests mit einem verfügbaren Update ersetzen das Modul `./updates`.
+      case "plugin:updater|check":
+        return null;
       case "create_update_backup": {
         const snapshot = takeSnapshot();
         backups.push(snapshot);

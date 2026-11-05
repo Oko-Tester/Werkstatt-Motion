@@ -18,7 +18,6 @@ import { HeaderSlotsProvider } from "./state/headerSlots";
 import { SearchFocusProvider } from "./state/searchFocus";
 import { WorkshopProvider, useWorkshop } from "./state/WorkshopProvider";
 import * as updates from "./updates";
-import type { UpdateProgress } from "./updates";
 
 const DAILY_BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const GOOGLE_SYNC_INTERVAL_MS = 60 * 60 * 1000;
@@ -139,16 +138,6 @@ function AppFrame({ areas }: { areas: readonly Area[] }) {
     googleSync.current?.soon(GOOGLE_SYNC_AFTER_CHANGE_MS);
   }, [appointmentsSignature, loading]);
 
-  async function handleInstallUpdate(
-    targetVersion: string,
-    onProgress: (progress: UpdateProgress) => void,
-  ) {
-    // Die Installation darf erst beginnen, nachdem das Backend das
-    // Sicherheits-Backup vollständig neben der EXE gespeichert hat.
-    await api.createUpdateBackup(targetVersion);
-    await updates.installUpdate(onProgress);
-  }
-
   return (
     <AppShell
       nav={
@@ -166,8 +155,8 @@ function AppFrame({ areas }: { areas: readonly Area[] }) {
           onConfirmRestore={confirmRestore}
           onCancelRestore={() => api.cancelRestore()}
           onCheckForUpdates={() => updates.checkForUpdate()}
-          onInstallUpdate={handleInstallUpdate}
-          onDiscardUpdate={() => updates.discardUpdate()}
+          onCreateUpdateBackup={(targetVersion) => api.createUpdateBackup(targetVersion)}
+          onInstallUpdate={(onProgress) => updates.installUpdate(onProgress)}
         />
       }
     >

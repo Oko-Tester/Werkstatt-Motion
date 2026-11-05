@@ -1,20 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { toApiError } from "../api";
-import type { BackupResult, RestorePreview } from "../api";
+import type { BackupResult, RestorePreview, UpdateBackupResult } from "../api";
 import { useHeaderSlotRefs } from "../state/headerSlots";
 import type { AvailableUpdate, UpdateProgress } from "../updates";
+import { UpdateBackupDialog } from "./UpdateBackupDialog";
 
 interface HeaderProps {
   onBackup: () => Promise<BackupResult>;
   onPrepareRestore: () => Promise<RestorePreview>;
   onConfirmRestore: () => Promise<void>;
   onCancelRestore: () => Promise<void>;
+  /** Fragt nach einer neuen Version – einmal still beim Start, sonst über das Menü. */
   onCheckForUpdates: () => Promise<AvailableUpdate | null>;
-  onInstallUpdate: (
-    targetVersion: string,
-    onProgress: (progress: UpdateProgress) => void,
-  ) => Promise<void>;
-  onDiscardUpdate: () => void;
+  /** Pflicht-Backup vor dem Update. Scheitert es, entscheidet der Nutzer im Fenster. */
+  onCreateUpdateBackup: (targetVersion: string) => Promise<UpdateBackupResult>;
+  /** Lädt und installiert die zuletzt gefundene Version; danach startet die App neu. */
+  onInstallUpdate: (onProgress: (progress: UpdateProgress) => void) => Promise<void>;
 }
 
 const STATUS_MS = 4000;
@@ -24,24 +25,41 @@ interface StatusMessage {
   kind: "ok" | "error";
 }
 
+/** Beschriftung des Update-Knopfs, während Download und Installation laufen. */
+function describeUpdateProgress(progress: UpdateProgress): string {
+  if (progress.finished) {
+    return "Installiert …";
+  }
+  if (progress.totalBytes !== null && progress.totalBytes > 0) {
+    const percent = Math.min(100, Math.round((progress.downloadedBytes / progress.totalBytes) * 100));
+    return `Lädt … ${percent} %`;
+  }
+  return "Lädt …";
+}
+
 export function Header({
   onBackup,
   onPrepareRestore,
   onConfirmRestore,
   onCancelRestore,
   onCheckForUpdates,
+  onCreateUpdateBackup,
   onInstallUpdate,
-  onDiscardUpdate,
 }: HeaderProps) {
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
-  const [updatePreview, setUpdatePreview] = useState<AvailableUpdate | null>(null);
-  const [updateMessage, setUpdateMessage] = useState("");
+  // Gefundene neue Version: Solange sie gesetzt ist, steht der Update-Knopf neben „⋯“.
+  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
+  // Beschriftung des Update-Knopfs, solange ein Update läuft.
+  const [updateProgress, setUpdateProgress] = useState<string | null>(null);
+  // Grund, warum das automatische Backup vor dem Update scheiterte; öffnet das Fenster.
+  const [updateBackupProblem, setUpdateBackupProblem] = useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const timerRef = useRef<number | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const updateButtonRef = useRef<HTMLButtonElement>(null);
   // Die Seite des aktiven Bereichs setzt ihre Teile in diese beiden Plätze.
   const { startRef, actionsRef } = useHeaderSlotRefs();
 
@@ -53,6 +71,24 @@ export function Header({
     },
     [],
   );
+
+  // Beim Start still nach einer neuen Version fragen. Ohne Netz oder bei einem Fehler
+  // bleibt der Knopf einfach weg; Fehler meldet nur die Suche über das Menü.
+  useEffect(() => {
+    let active = true;
+    onCheckForUpdates()
+      .then((available) => {
+        if (active && available !== null) {
+          setAvailableUpdate(available);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+    // Nur einmal beim Start.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!actionsMenuOpen) {
@@ -172,13 +208,13 @@ export function Header({
     showStatus("Suche nach Updates …", "ok");
     try {
       const available = await onCheckForUpdates();
-      if (available === null) {
-        showStatus("Werkstatt Motion ist aktuell", "ok");
-      } else {
-        setStatus(null);
-        setUpdateMessage("");
-        setUpdatePreview(available);
-      }
+      setAvailableUpdate(available);
+      showStatus(
+        available === null
+          ? "Werkstatt Motion ist aktuell"
+          : `Version ${available.version} ist verfügbar`,
+        "ok",
+      );
     } catch (err) {
       showStatus(errorMessage(err, "Die Update-Suche ist fehlgeschlagen"), "error");
     } finally {
@@ -186,42 +222,51 @@ export function Header({
     }
   }
 
-  async function handleInstallUpdate() {
-    if (busy || updatePreview === null) {
+  /**
+   * Klick auf den Update-Knopf: erst das Pflicht-Backup, dann Download und Installation.
+   * Scheitert das Backup, startet nichts. Das Fenster lässt den Nutzer dann selbst ein
+   * Backup speichern oder ausdrücklich auf eigenes Risiko ohne Backup weitermachen.
+   */
+  async function handleStartUpdate() {
+    if (busy || availableUpdate === null) {
       return;
     }
-    const targetVersion = updatePreview.version;
     setBusy(true);
-    setUpdateMessage("Sicherheits-Backup wird erstellt …");
+    setStatus(null);
+    setUpdateProgress("Backup läuft …");
     try {
-      await onInstallUpdate(targetVersion, (progress) => {
-        if (progress.finished) {
-          setUpdateMessage("Update wird installiert …");
-          return;
-        }
-        if (progress.totalBytes !== null && progress.totalBytes > 0) {
-          const percent = Math.min(
-            100,
-            Math.round((progress.downloadedBytes / progress.totalBytes) * 100),
-          );
-          setUpdateMessage(`Update wird heruntergeladen … ${percent} %`);
-        } else {
-          setUpdateMessage("Update wird heruntergeladen …");
-        }
-      });
+      await onCreateUpdateBackup(availableUpdate.version);
     } catch (err) {
-      setUpdatePreview(null);
-      setUpdateMessage("");
+      setUpdateProgress(null);
+      setBusy(false);
+      setUpdateBackupProblem(errorMessage(err, "Das Backup vor dem Update ist fehlgeschlagen"));
+      return;
+    }
+    await installUpdate();
+  }
+
+  async function installUpdate() {
+    setBusy(true);
+    setUpdateProgress("Lädt …");
+    try {
+      await onInstallUpdate((progress) => setUpdateProgress(describeUpdateProgress(progress)));
+    } catch (err) {
       showStatus(errorMessage(err, "Das Update konnte nicht installiert werden"), "error");
     } finally {
+      // Nach einem Fehler bleibt der Knopf stehen: Ein neuer Klick versucht es noch einmal.
+      setUpdateProgress(null);
       setBusy(false);
     }
   }
 
-  function handleDiscardUpdate() {
-    onDiscardUpdate();
-    setUpdatePreview(null);
-    setUpdateMessage("");
+  function handleInstallWithoutAutomaticBackup() {
+    setUpdateBackupProblem(null);
+    void installUpdate();
+  }
+
+  function handleCancelUpdateDialog() {
+    setUpdateBackupProblem(null);
+    updateButtonRef.current?.focus();
   }
 
   function describePreview(preview: RestorePreview): string {
@@ -272,43 +317,6 @@ export function Header({
               </svg>
             </button>
           </div>
-        ) : updatePreview !== null ? (
-          <div className="update-confirm" role="group" aria-label="Update bestätigen">
-            <span className="update-confirm-text">
-              {updateMessage ||
-                `Version ${updatePreview.version} ist verfügbar (installiert: ${updatePreview.currentVersion})`}
-            </span>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy}
-              onClick={handleInstallUpdate}
-            >
-              Update installieren
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Update abbrechen"
-              disabled={busy}
-              onClick={handleDiscardUpdate}
-            >
-              <svg
-                aria-hidden="true"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M18 6 6 18" />
-                <path d="m6 6 12 12" />
-              </svg>
-            </button>
-          </div>
         ) : (
           <>
             <span
@@ -318,6 +326,53 @@ export function Header({
             >
               {status?.text}
             </span>
+            {availableUpdate !== null ? (
+              <button
+                ref={updateButtonRef}
+                type="button"
+                className={updateProgress !== null ? "update-button is-running" : "update-button"}
+                disabled={busy}
+                title={
+                  updateProgress === null
+                    ? `Version ${availableUpdate.version} installieren (installiert: ${availableUpdate.currentVersion}). Vorher legt die App ein Backup an.`
+                    : undefined
+                }
+                onClick={handleStartUpdate}
+              >
+                {updateProgress !== null ? (
+                  <svg
+                    className="update-button-spinner"
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.25"
+                    strokeLinecap="round"
+                  >
+                    <path d="M21 12a9 9 0 1 1-6.22-8.56" />
+                  </svg>
+                ) : (
+                  <svg
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7.5v9" />
+                    <path d="m8 12.5 4 4 4-4" />
+                  </svg>
+                )}
+                <span aria-live="polite">{updateProgress ?? `Update ${availableUpdate.version}`}</span>
+              </button>
+            ) : null}
             <div className="actions-menu" ref={actionsMenuRef}>
               <button
                 ref={actionsMenuButtonRef}
@@ -402,6 +457,15 @@ export function Header({
           </>
         )}
       </div>
+      {updateBackupProblem !== null && availableUpdate !== null ? (
+        <UpdateBackupDialog
+          version={availableUpdate.version}
+          reason={updateBackupProblem}
+          onBackup={onBackup}
+          onConfirm={handleInstallWithoutAutomaticBackup}
+          onCancel={handleCancelUpdateDialog}
+        />
+      ) : null}
     </header>
   );
 }

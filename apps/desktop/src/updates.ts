@@ -15,23 +15,34 @@ export interface UpdateProgress {
 }
 
 let pendingUpdate: Update | null = null;
+let runningCheck: Promise<AvailableUpdate | null> | null = null;
 
-export async function checkForUpdate(): Promise<AvailableUpdate | null> {
-  pendingUpdate?.close();
-  pendingUpdate = await check({ timeout: 30_000 });
-  if (pendingUpdate === null) {
+/**
+ * Fragt bei GitHub nach einer neuen Version. Überschneiden sich zwei Prüfungen – etwa die
+ * beim Start und ein Klick auf „Nach Updates suchen“ –, teilen sie sich eine Anfrage.
+ */
+export function checkForUpdate(): Promise<AvailableUpdate | null> {
+  runningCheck ??= runCheck().finally(() => {
+    runningCheck = null;
+  });
+  return runningCheck;
+}
+
+async function runCheck(): Promise<AvailableUpdate | null> {
+  const update = await check({ timeout: 30_000 });
+  // Das vorige Ergebnis erst jetzt freigeben: Scheitert die Prüfung, bleibt es gültig.
+  if (pendingUpdate !== null) {
+    void pendingUpdate.close().catch(() => {});
+  }
+  pendingUpdate = update;
+  if (update === null) {
     return null;
   }
   return {
-    version: pendingUpdate.version,
-    currentVersion: pendingUpdate.currentVersion,
-    notes: pendingUpdate.body ?? null,
+    version: update.version,
+    currentVersion: update.currentVersion,
+    notes: update.body ?? null,
   };
-}
-
-export function discardUpdate() {
-  pendingUpdate?.close();
-  pendingUpdate = null;
 }
 
 export async function installUpdate(

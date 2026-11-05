@@ -173,18 +173,28 @@ Die bereitgestellten Linux-Pakete sind für 64-Bit-PCs (`x86_64`) vorgesehen.
 
 ## Updates
 
-Im Drei-Punkte-Menü oben rechts auf **„Nach Updates suchen“** klicken. Ist eine
-neue Version verfügbar, zeigt Werkstatt Motion die Versionsnummer an. Das
-Update startet erst nach einem Klick auf **„Update installieren“**.
+Beim Start prüft Werkstatt Motion, ob es eine neue Version gibt. Ist eine
+verfügbar, erscheint oben rechts neben dem Drei-Punkte-Menü ein kleiner Knopf
+mit der Versionsnummer, zum Beispiel **„Update 1.5.0“**. Ein Klick darauf
+installiert das Update; der Knopf zeigt dabei den Fortschritt, danach startet
+die App neu. Über **„Nach Updates suchen“** im Drei-Punkte-Menü lässt sich
+jederzeit auch von Hand nachsehen.
 
 Vor der Installation erstellt die App automatisch ein vollständiges
 Sicherheits-Backup. Es landet im Unterordner `Backups` neben der installierten
 Programmdatei; ist dieser Ordner nicht beschreibbar – unter Linux etwa bei
 einer Paketinstallation nach `/usr/bin` oder bei einem AppImage –, weicht die
-App auf den Backup-Ordner im Anwendungsdatenverzeichnis aus. Erst wenn auch
-dort keine vollständige Sicherung geschrieben werden kann, wird das Update
-nicht durchgeführt. Für die Update-Suche wird kurzzeitig eine
-Internetverbindung benötigt; ansonsten bleibt Werkstatt Motion vollständig
+App auf den Backup-Ordner im Anwendungsdatenverzeichnis aus.
+
+Lässt sich auch dort keine vollständige Sicherung schreiben, startet das
+Update nicht von selbst. Ein Fenster weist darauf hin und bietet
+**„Backup speichern …“** an, um die Daten an einem frei gewählten Ort zu
+sichern, etwa auf einem USB-Stick; danach lässt sich das Update installieren.
+Wer ohne Backup aktualisieren will, setzt den Haken **„Auf eigenes Risiko ohne
+Backup aktualisieren“**.
+
+Für die Update-Suche wird kurzzeitig eine Internetverbindung benötigt. Ohne
+Netz erscheint einfach kein Knopf, und Werkstatt Motion bleibt vollständig
 offline nutzbar.
 
 ## Datensicherung
