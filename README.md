@@ -101,8 +101,9 @@ Unter **„Einstellungen“ › „Kalender“** verbindet **„Mit Google verbi
 mit einem Google-Konto. Die Anmeldung läuft im Browser; danach legt die App dort
 einen eigenen Kalender **„Werkstatt Motion“** an und trägt die Termine ein – nur in
 diese Richtung, zum Ansehen etwa auf dem Handy. Eingetragen wird weiter in der App.
-Abgeglichen wird beim Start, stündlich und mit **„Jetzt abgleichen“**. Ein Termin
-mit Uhrzeit steht dort für eine Stunde, einer ohne Uhrzeit ganztägig.
+Abgeglichen wird wenige Sekunden nach jeder Änderung an einem Termin, beim Start,
+stündlich und mit **„Jetzt abgleichen“**. Ein Termin mit Uhrzeit steht dort für eine
+Stunde, einer ohne Uhrzeit ganztägig.
 
 In den Terminen steht zunächst nur das Fahrzeug. Kunde und Kennzeichen kommen nur
 mit der Wahl **„Mit Kunde und Kennzeichen“** dazu, Notizen nie. **„Trennen“** löscht

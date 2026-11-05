@@ -1081,8 +1081,9 @@ pub fn google_cancel_connect(google_state: State<'_, GoogleState>) {
     google_state.cancel();
 }
 
-/// Gleicht ab, falls verbunden. Läuft schon ein Abgleich oder eine Anmeldung, zählt deren
-/// Ergebnis; ein Fehlschlag steht danach im Stand, nicht als Fehler des Befehls.
+/// Gleicht ab, falls verbunden. Läuft schon ein Abgleich oder eine Anmeldung, wartet dieser
+/// Lauf und liest die Fahrzeuge erst danach – so geht keine Änderung verloren. Ein
+/// Fehlschlag steht danach im Stand, nicht als Fehler des Befehls.
 #[tauri::command]
 pub async fn google_sync(
     db: State<'_, Db>,
@@ -1090,11 +1091,11 @@ pub async fn google_sync(
     paths: State<'_, StoragePaths>,
     google_state: State<'_, GoogleState>,
 ) -> Result<GoogleStatus, ApiError> {
-    let gate = google_state.gate.try_lock();
-    let (Some(creds), Ok(_gate)) = (google::client_credentials(), gate) else {
+    let Some(creds) = google::client_credentials() else {
         let vehicles = vehicle_snapshot(&db).unwrap_or_default();
         return Ok(google_status_from(&paths, &vehicles));
     };
+    let _gate = google_state.gate.lock().await;
     let vehicles = vehicle_snapshot(&db)?;
     let api = google_api()?;
     let tokens = VaultTokens(&vault);

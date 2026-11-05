@@ -191,7 +191,8 @@ export function CalendarSettings() {
         Die App legt in deinem Google-Konto einen eigenen Kalender „Werkstatt Motion“ an und
         trägt dort die Termine ein, nur zum Ansehen. Andere Kalender liest oder ändert sie nie.
         Dafür gehen die Termine über das Internet zu Google; ohne Verbindung läuft die App wie
-        bisher. Abgeglichen wird beim Start der App, stündlich und mit „Jetzt abgleichen“.
+        bisher. Abgeglichen wird wenige Sekunden nach jeder Änderung an einem Termin, beim
+        Start der App, stündlich und mit „Jetzt abgleichen“.
       </InfoTip>
     </div>
   );

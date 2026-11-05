@@ -87,8 +87,10 @@ reicht sie an den Build weiter (siehe [RELEASES.md](RELEASES.md)).
 - **Termine:** dieselben wie im Kalender der App. Mit Uhrzeit eine Stunde lang, ohne
   Uhrzeit ganztägig. Standardmäßig steht nur das Fahrzeug darin; Kunde und Kennzeichen
   nur mit der Wahl „Mit Kunde und Kennzeichen“, Notizen nie.
-- **Abgleich:** beim Start der App, stündlich und mit „Jetzt abgleichen“, immer der
-  vollständige Stand. Ohne Internet passiert nichts; der nächste Lauf holt alles nach.
+- **Abgleich:** wenige Sekunden nach jeder Änderung an einem Termin (mehrere Änderungen
+  kurz hintereinander ergeben einen Lauf), beim Start der App, stündlich und mit „Jetzt
+  abgleichen“, immer der vollständige Stand und nie zwei Läufe gleichzeitig. Ohne Internet
+  passiert nichts; der nächste Lauf holt alles nach.
   Wird der Kalender bei Google gelöscht, legt die App ihn beim nächsten Abgleich neu an.
 - **Trennen:** löscht den Kalender bei Google und widerruft den Zugang. Ist Google nicht
   erreichbar, bleibt die Verbindung bestehen; „Nur hier trennen“ räumt dann nur in der

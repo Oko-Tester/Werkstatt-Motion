@@ -325,4 +325,42 @@ describe("Abgleich mit Google Kalender im Hintergrund", () => {
     await waitFor(() => expect(calls(backend, "google_sync")).toBe(1));
     expect(screen.queryByText(/Keine Verbindung zu Google/)).toBeNull();
   });
+
+  it("gleicht wenige Sekunden nach einer Änderung an einem Termin ab", async () => {
+    const backend = installFakeBackend({ vehicles: VEHICLES });
+    connected(backend);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    await screen.findByDisplayValue("Müller");
+    await waitFor(() => expect(calls(backend, "google_sync")).toBe(1));
+
+    const car = screen.getByDisplayValue("VW Golf");
+    await user.clear(car);
+    await user.type(car, "VW Golf GTI");
+    await user.tab();
+    await waitFor(() => expect(backend.calls).toContain("update_vehicle"));
+
+    // Erst nach der kurzen Wartezeit, dann genau ein Lauf.
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(calls(backend, "google_sync")).toBe(1);
+    await vi.advanceTimersByTimeAsync(3000);
+    await waitFor(() => expect(calls(backend, "google_sync")).toBe(2));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls(backend, "google_sync")).toBe(2);
+  });
+
+  it("gleicht nach einer Änderung am Arbeitsstand nicht extra ab", async () => {
+    const backend = installFakeBackend({ vehicles: VEHICLES });
+    connected(backend);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    await screen.findByDisplayValue("Müller");
+    await waitFor(() => expect(calls(backend, "google_sync")).toBe(1));
+
+    await user.click(screen.getByRole("button", { name: "TÜV nötig (AB-CD 123)" }));
+    await waitFor(() => expect(backend.vehicles[0].tuvRequired).toBe(true));
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls(backend, "google_sync")).toBe(1);
+  });
 });

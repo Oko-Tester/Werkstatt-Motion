@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api";
 import { toApiError } from "./api";
 import { AREAS } from "./areas";
@@ -6,6 +6,12 @@ import type { Area } from "./areas";
 import { AppShell } from "./components/AppShell";
 import { Header } from "./components/Header";
 import { NavRail } from "./components/NavRail";
+import {
+  GOOGLE_SYNC_AFTER_CHANGE_MS,
+  calendarSignature,
+  createGoogleSyncScheduler,
+} from "./googleSync";
+import type { GoogleSyncScheduler } from "./googleSync";
 import { AreasProvider } from "./state/AreasProvider";
 import { FeedbackProvider, useFeedback } from "./state/feedback";
 import { HeaderSlotsProvider } from "./state/headerSlots";
@@ -41,7 +47,8 @@ export default function App({ areas = AREAS }: AppProps) {
 /** Gerüst der App: Leiste, Kopfzeile und die Seite des aktiven Bereichs. */
 function AppFrame({ areas }: { areas: readonly Area[] }) {
   const { showNotice } = useFeedback();
-  const { secret, confirmRestore } = useWorkshop();
+  const { secret, confirmRestore, vehicles, loading } = useWorkshop();
+  const googleSync = useRef<GoogleSyncScheduler | null>(null);
   const [activeAreaId, setActiveAreaId] = useState(areas[0].id);
   const activeArea = areas.find((area) => area.id === activeAreaId) ?? areas[0];
   const ActivePage = activeArea.Page;
@@ -91,41 +98,46 @@ function AppFrame({ areas }: { areas: readonly Area[] }) {
 
   useEffect(() => {
     let active = true;
-    let running = false;
     // Ohne Netz bleibt es still (der nächste Lauf holt alles nach, der Stand steht in den
     // Einstellungen). Ist der Zugang abgelaufen, hilft nur der Nutzer: einmal pro Tag sagen.
     let lastReconnectNoticeDay = "";
 
-    function syncGoogle() {
-      if (running) return;
-      running = true;
-      void api
-        .syncGoogle()
-        .then((status) => {
-          const today = new Date().toDateString();
-          if (active && status.connected && status.needsReconnect && today !== lastReconnectNoticeDay) {
-            showNotice(
-              "Google Kalender: Die Verbindung ist abgelaufen. Bitte unter Einstellungen › Kalender neu verbinden.",
-            );
-            lastReconnectNoticeDay = today;
-          }
-        })
-        .catch(() => {
-          // Ein Fehler hier ist nur ein ausgelassener Lauf; die Einstellungen zeigen den Stand.
-        })
-        .finally(() => {
-          running = false;
-        });
-    }
-
-    syncGoogle();
-    const timer = window.setInterval(syncGoogle, GOOGLE_SYNC_INTERVAL_MS);
+    const scheduler = createGoogleSyncScheduler(async () => {
+      const status = await api.syncGoogle();
+      const today = new Date().toDateString();
+      if (active && status.connected && status.needsReconnect && today !== lastReconnectNoticeDay) {
+        showNotice(
+          "Google Kalender: Die Verbindung ist abgelaufen. Bitte unter Einstellungen › Kalender neu verbinden.",
+        );
+        lastReconnectNoticeDay = today;
+      }
+    });
+    googleSync.current = scheduler;
+    scheduler.now();
+    const timer = window.setInterval(() => scheduler.now(), GOOGLE_SYNC_INTERVAL_MS);
     return () => {
       active = false;
       window.clearInterval(timer);
+      scheduler.dispose();
+      googleSync.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Wenige Sekunden nach jeder Änderung an Terminen abgleichen. Der erste geladene Stand
+  // zählt nicht als Änderung; den deckt der Abgleich beim Start ab.
+  const appointmentsSignature = useMemo(() => calendarSignature(vehicles.list), [vehicles.list]);
+  const lastSignature = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading) return;
+    if (lastSignature.current === null) {
+      lastSignature.current = appointmentsSignature;
+      return;
+    }
+    if (appointmentsSignature === lastSignature.current) return;
+    lastSignature.current = appointmentsSignature;
+    googleSync.current?.soon(GOOGLE_SYNC_AFTER_CHANGE_MS);
+  }, [appointmentsSignature, loading]);
 
   async function handleInstallUpdate(
     targetVersion: string,
