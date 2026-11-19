@@ -452,3 +452,139 @@ describe("Termin zuerst, Kunde danach (Anruf in der Werkstatt)", () => {
     ).toHaveFocus();
   });
 });
+
+describe("Belegung im Terminfenster (Anruf: „Passt Mittwoch?“)", () => {
+  const OCCUPANCY = { name: "Belegung des Tages" };
+
+  beforeEach(() => {
+    // Heute ist Sonntag, 09.08.2026; am Mittwoch liegen drei Termine, am Donnerstag einer.
+    backend = installFakeBackend({
+      vehicles: [
+        {
+          customerName: "Müller, Anna",
+          vehicleName: "VW Golf VII",
+          licensePlate: "M-AB 1234",
+          appointmentAt: "2026-08-12T08:30",
+        },
+        {
+          customerName: "Yilmaz, Emre",
+          vehicleName: "BMW 320d",
+          licensePlate: "M-EY 482",
+          appointmentAt: "2026-08-12T10:15",
+        },
+        {
+          customerName: "Schneider, Thomas",
+          vehicleName: "Audi A4",
+          licensePlate: "EBE-TS 77",
+          appointmentAt: "2026-08-12",
+        },
+        {
+          customerName: "Wagner, Lena",
+          vehicleName: "Mercedes Vito",
+          licensePlate: "M-WL 907",
+          appointmentAt: "2026-08-13T09:00",
+        },
+        { customerName: "Becker, Jonas", vehicleName: "Ford Transit", licensePlate: "A-JB 420" },
+      ],
+    });
+  });
+
+  async function openAppointment(customerName: string) {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await renderApp();
+    await user.click(
+      within(getVehicleRow(customerName)).getByRole("button", {
+        name: `Termin für ${customerName}`,
+      }),
+    );
+    return user;
+  }
+
+  function changeDate(value: string) {
+    fireEvent.change(screen.getByLabelText("Datum"), { target: { value } });
+  }
+
+  /** Zeilen der Belegung als [Uhrzeit, Kunde, Fahrzeug]. */
+  function occupancyRows(): string[][] {
+    return within(screen.getByRole("group", OCCUPANCY))
+      .queryAllByRole("listitem")
+      .map((item) => Array.from(item.children, (cell) => cell.textContent ?? ""));
+  }
+
+  it("zeigt die Termine des gewählten Tages, ohne Uhrzeit zuerst", async () => {
+    await openAppointment("Becker, Jonas");
+
+    // Ohne eigenen Termin beginnt das Fenster mit heute – und heute ist nichts los.
+    expect(screen.getByRole("group", OCCUPANCY)).toHaveTextContent("So 09.08. · frei");
+    expect(occupancyRows()).toEqual([]);
+
+    changeDate("12.08.2026");
+
+    expect(screen.getByRole("group", OCCUPANCY)).toHaveTextContent("Mi 12.08. · 3 Termine");
+    expect(occupancyRows()).toEqual([
+      ["Ohne Zeit", "Schneider, Thomas", "Audi A4"],
+      ["08:30", "Müller, Anna", "VW Golf VII"],
+      ["10:15", "Yilmaz, Emre", "BMW 320d"],
+    ]);
+
+    changeDate("13.08.2026");
+    expect(screen.getByRole("group", OCCUPANCY)).toHaveTextContent("Do 13.08. · 1 Termin");
+  });
+
+  it("zählt den eigenen Termin nicht mit", async () => {
+    await openAppointment("Müller, Anna");
+
+    expect(screen.getByRole("group", OCCUPANCY)).toHaveTextContent("Mi 12.08. · 2 Termine");
+    expect(occupancyRows().map(([, customer]) => customer)).toEqual([
+      "Schneider, Thomas",
+      "Yilmaz, Emre",
+    ]);
+  });
+
+  it("zeigt im Datumskalender, wie viele Termine an jedem Tag liegen", async () => {
+    const user = await openAppointment("Becker, Jonas");
+
+    await user.click(screen.getByRole("button", { name: "Kalender zur Datumsauswahl öffnen" }));
+
+    const wednesday = screen.getByRole("button", {
+      name: "Mittwoch, 12. August 2026, 3 Termine",
+    });
+    expect(within(wednesday).getByText("3")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Donnerstag, 13. August 2026, 1 Termin" }),
+    ).toBeInTheDocument();
+    // Tage ohne Termin behalten ihren schlichten Namen.
+    expect(screen.getByRole("button", { name: "Freitag, 14. August 2026" })).toBeInTheDocument();
+
+    await user.click(wednesday);
+    expect(screen.getByRole("group", OCCUPANCY)).toHaveTextContent("Mi 12.08. · 3 Termine");
+  });
+
+  it("bleibt von der Suche in der Fahrzeugliste unberührt", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await renderApp();
+    await user.type(screen.getByRole("searchbox", { name: "Fahrzeuge durchsuchen" }), "Müller");
+    await waitFor(() => expect(screen.queryByDisplayValue("Yilmaz, Emre")).toBeNull());
+
+    await user.click(
+      within(getVehicleRow("Müller, Anna")).getByRole("button", {
+        name: "Termin für Müller, Anna",
+      }),
+    );
+
+    expect(screen.getByRole("group", OCCUPANCY)).toHaveTextContent("Mi 12.08. · 2 Termine");
+    expect(occupancyRows().map(([, customer]) => customer)).toEqual([
+      "Schneider, Thomas",
+      "Yilmaz, Emre",
+    ]);
+  });
+
+  it("zeigt nichts, solange das Datum unvollständig ist", async () => {
+    await openAppointment("Becker, Jonas");
+
+    changeDate("12.08.");
+
+    expect(screen.queryByRole("group", OCCUPANCY)).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("Bitte als TT.MM.JJJJ eingeben");
+  });
+});

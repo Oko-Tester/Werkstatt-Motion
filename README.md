@@ -85,6 +85,13 @@ oder Kennzeichen eingetragen sind und die Zeile verlassen wird. Ein Termin ohne
 Kunden wird nicht aufgehoben: Wird die Zeile ohne Kunden verlassen, ist der
 Eintrag wieder verworfen.
 
+Damit man am Telefon sofort sieht, ob ein Tag passt, zeigt das Terminfenster
+unter Datum und Uhrzeit, was an diesem Tag schon eingetragen ist: Uhrzeit,
+Kunde und Fahrzeug, bei einem leeren Tag **„frei“**. Im Datumskalender steht an
+jedem Tag die Zahl seiner Termine. Der Termin des Fahrzeugs, das gerade
+bearbeitet wird, zählt dabei nicht mit, und eine Suche in der Fahrzeugliste
+ändert nichts an der Anzeige.
+
 Über **„Kalender“** in der Leiste links öffnet sich die Monatsübersicht.
 Dort erscheinen dieselben Fahrzeugtermine mit Uhrzeit beziehungsweise dem
 Hinweis **„Ohne Uhrzeit“**, Kunde, Fahrzeug und Kennzeichen. Änderungen aus der

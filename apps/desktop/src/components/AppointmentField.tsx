@@ -1,10 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { FormEvent, MouseEvent } from "react";
-import { appointmentParts, formatAppointment, localDateKey } from "../appointments";
+import {
+  appointmentParts,
+  formatAppointment,
+  groupAppointmentsByDay,
+  localDateKey,
+} from "../appointments";
+import { useWorkshop } from "../state/WorkshopProvider";
+import type { Vehicle } from "../types";
 import { GermanDatePicker } from "./GermanDatePicker";
 
 interface AppointmentFieldProps {
+  /** Das Fahrzeug dieser Zeile. Sein eigener Termin zählt nicht als Belegung. */
+  vehicleId: string;
   appointmentAt: string | null;
   customerName: string;
   onChange: (appointmentAt: string | null) => void;
@@ -12,25 +21,92 @@ interface AppointmentFieldProps {
 
 interface PopoverPosition {
   left: number;
-  top: number;
+  /** Das Fenster geht nach unten auf und wächst von dieser Kante weg … */
+  top?: number;
+  /** … oder nach oben, wenn unter der Zeile zu wenig Platz ist. */
+  bottom?: number;
+  listMaxHeight: number;
 }
 
 const POPOVER_WIDTH = 320;
-const POPOVER_HEIGHT = 230;
+/** Höhe des Fensters ohne die Liste der Termine. */
+const POPOVER_BASE_HEIGHT = 250;
+/** Sechs Termine passen ohne Scrollbalken. */
+const LIST_MAX_HEIGHT = 140;
+const LIST_MIN_HEIGHT = 66;
 const VIEWPORT_MARGIN = 8;
+const NO_APPOINTMENTS = new Map<string, Vehicle[]>();
+
+/** Was an dem Tag schon eingetragen ist: Am Telefon sieht man sofort, ob er passt. */
+function DayOccupancy({
+  date,
+  entries,
+  maxHeight,
+}: {
+  date: string;
+  entries: readonly Vehicle[];
+  maxHeight: number;
+}) {
+  const summary =
+    entries.length === 0
+      ? "frei"
+      : entries.length === 1
+        ? "1 Termin"
+        : `${entries.length} Termine`;
+
+  return (
+    <div className="appointment-day" role="group" aria-label="Belegung des Tages">
+      <p
+        className={
+          entries.length === 0 ? "appointment-day-title is-free" : "appointment-day-title"
+        }
+        aria-live="polite"
+      >
+        {formatAppointment(date)} · {summary}
+      </p>
+      {entries.length > 0 ? (
+        <ul className="appointment-day-list" style={{ maxHeight }}>
+          {entries.map((entry) => (
+            <li key={entry.id}>
+              <span className="appointment-day-time">
+                {appointmentParts(entry.appointmentAt)?.time ?? "Ohne Zeit"}
+              </span>
+              <strong>{entry.customerName}</strong>
+              <span className="appointment-day-vehicle">{entry.vehicleName}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 export function AppointmentField({
+  vehicleId,
   appointmentAt,
   customerName,
   onChange,
 }: AppointmentFieldProps) {
+  const { vehicles } = useWorkshop();
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
-  const [position, setPosition] = useState<PopoverPosition>({ left: 0, top: 0 });
+  const [position, setPosition] = useState<PopoverPosition>({
+    left: 0,
+    top: 0,
+    listMaxHeight: LIST_MAX_HEIGHT,
+  });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const formatted = formatAppointment(appointmentAt);
+  // Die volle Fahrzeugliste, nicht die gefilterte: Eine Suche ändert nichts an der Belegung.
+  const appointmentsByDay = useMemo(
+    () =>
+      open
+        ? groupAppointmentsByDay(vehicles.list.filter((entry) => entry.id !== vehicleId))
+        : NO_APPOINTMENTS,
+    [open, vehicleId, vehicles.list],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -67,11 +143,23 @@ export function AppointmentField({
       VIEWPORT_MARGIN,
       Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN),
     );
-    const top =
-      rect.bottom + POPOVER_HEIGHT + VIEWPORT_MARGIN <= window.innerHeight
-        ? rect.bottom + VIEWPORT_MARGIN
-        : Math.max(VIEWPORT_MARGIN, rect.top - POPOVER_HEIGHT - VIEWPORT_MARGIN);
-    setPosition({ left, top });
+    // Die Seite wird einmal gewählt und reicht für die längste Liste. So springt das
+    // Fenster nicht, wenn ein anderer Tag mehr Termine hat.
+    const spaceBelow = window.innerHeight - rect.bottom - 2 * VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - 2 * VIEWPORT_MARGIN;
+    const opensBelow =
+      spaceBelow >= POPOVER_BASE_HEIGHT + LIST_MAX_HEIGHT || spaceBelow >= spaceAbove;
+    const space = opensBelow ? spaceBelow : spaceAbove;
+    setPosition({
+      left,
+      ...(opensBelow
+        ? { top: rect.bottom + VIEWPORT_MARGIN }
+        : { bottom: window.innerHeight - rect.top + VIEWPORT_MARGIN }),
+      listMaxHeight: Math.max(
+        LIST_MIN_HEIGHT,
+        Math.min(LIST_MAX_HEIGHT, space - POPOVER_BASE_HEIGHT),
+      ),
+    });
     setOpen(true);
   }
 
@@ -135,7 +223,7 @@ export function AppointmentField({
               aria-label={`Termin für ${accessibleName} bearbeiten`}
               // Das Portal liegt im body; der Fokus darin gehört weiter zur Tabellenzeile.
               data-keeps-row-focus="true"
-              style={{ left: position.left, top: position.top }}
+              style={{ left: position.left, top: position.top, bottom: position.bottom }}
             >
               <div className="appointment-popover-heading">
                 <span>Werkstatttermin</span>
@@ -143,7 +231,12 @@ export function AppointmentField({
               </div>
               <form onSubmit={save}>
                 <div className="appointment-inputs">
-                  <GermanDatePicker value={date} autoFocus onChange={setDate} />
+                  <GermanDatePicker
+                    value={date}
+                    autoFocus
+                    onChange={setDate}
+                    countAppointments={(day) => appointmentsByDay.get(day)?.length ?? 0}
+                  />
                   <label>
                     <span className="appointment-time-label">
                       Uhrzeit <small>optional</small>
@@ -157,7 +250,13 @@ export function AppointmentField({
                     />
                   </label>
                 </div>
-                <p>Die Uhrzeit kann leer bleiben. Änderungen werden direkt gespeichert.</p>
+                {date !== "" ? (
+                  <DayOccupancy
+                    date={date}
+                    entries={appointmentsByDay.get(date) ?? []}
+                    maxHeight={position.listMaxHeight}
+                  />
+                ) : null}
                 <div className="appointment-popover-actions">
                   {appointmentAt !== null ? (
                     <button type="button" className="btn appointment-remove" onClick={remove}>

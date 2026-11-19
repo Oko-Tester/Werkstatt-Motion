@@ -126,6 +126,7 @@ export function VehicleRow({
       case "appointmentAt":
         return (
           <AppointmentField
+            vehicleId={vehicle.id}
             appointmentAt={vehicle.appointmentAt}
             customerName={vehicle.customerName}
             onChange={changeAppointment}

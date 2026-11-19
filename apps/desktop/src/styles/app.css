@@ -1034,6 +1034,7 @@ input {
 }
 
 .appointment-date-days button {
+  position: relative;
   height: 30px;
   padding: 0;
   border: 1px solid transparent;
@@ -1076,10 +1077,84 @@ input {
   color: #ffffff;
 }
 
-.appointment-popover form > p {
-  margin: 9px 0 13px;
+/* Zahl der Termine an einem Tag im Datumskalender. */
+.appointment-day-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+}
+
+.appointment-date-days button:hover .appointment-day-count,
+.appointment-date-days button:focus-visible .appointment-day-count {
+  background: var(--color-primary-border);
+}
+
+.appointment-date-days button.is-selected .appointment-day-count {
+  background: #ffffff;
+}
+
+/* Belegung des gewählten Tages im Terminfenster. */
+.appointment-day {
+  margin: 12px 0 13px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.appointment-day-title {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+.appointment-day-title.is-free {
+  color: var(--color-success);
+}
+
+.appointment-day-list {
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.appointment-day-list li {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) minmax(0, 0.8fr);
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: var(--font-size-caption);
+}
+
+.appointment-day-list strong,
+.appointment-day-vehicle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointment-day-list strong {
+  font-weight: 500;
+}
+
+.appointment-day-time {
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.appointment-day-vehicle {
   color: var(--color-text-muted);
-  font-size: 11px;
 }
 
 .appointment-popover-actions {

@@ -6,6 +6,8 @@ interface GermanDatePickerProps {
   value: string;
   autoFocus?: boolean;
   onChange: (value: string) => void;
+  /** Wie viele Termine an einem Tag (`YYYY-MM-DD`) schon liegen; steht klein am Tag. */
+  countAppointments?: (dateKey: string) => number;
 }
 
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -78,6 +80,7 @@ export function GermanDatePicker({
   value,
   autoFocus = false,
   onChange,
+  countAppointments,
 }: GermanDatePickerProps) {
   const initialDate = dateFromIso(value) ?? new Date();
   const [text, setText] = useState(() => formatGermanDate(value));
@@ -291,6 +294,8 @@ export function GermanDatePicker({
             {days.map((date) => {
               const key = localDateKey(date);
               const outside = date.getMonth() !== visibleMonth.getMonth();
+              const count = countAppointments?.(key) ?? 0;
+              const dayName = DAY_FORMATTER.format(date);
               const className = [
                 outside ? "is-outside" : "",
                 key === selectedKey ? "is-selected" : "",
@@ -307,13 +312,22 @@ export function GermanDatePicker({
                   }}
                   type="button"
                   className={className}
-                  aria-label={DAY_FORMATTER.format(date)}
+                  aria-label={
+                    count === 0
+                      ? dayName
+                      : `${dayName}, ${count === 1 ? "1 Termin" : `${count} Termine`}`
+                  }
                   aria-pressed={key === selectedKey}
                   tabIndex={key === focusedDate ? 0 : -1}
                   onClick={() => selectDate(date)}
                   onKeyDown={(event) => moveCalendarFocus(event, date)}
                 >
                   {date.getDate()}
+                  {count > 0 ? (
+                    <span className="appointment-day-count" aria-hidden="true">
+                      {count}
+                    </span>
+                  ) : null}
                 </button>
               );
             })}

@@ -1,5 +1,10 @@
 import { useMemo, useState } from "react";
-import { appointmentDate, appointmentParts, localDateKey } from "../appointments";
+import {
+  appointmentDate,
+  appointmentParts,
+  groupAppointmentsByDay,
+  localDateKey,
+} from "../appointments";
 import { HeaderActions, HeaderStart } from "../state/headerSlots";
 import type { Vehicle } from "../types";
 
@@ -53,24 +58,7 @@ export function CalendarWorkspace({ vehicles }: CalendarWorkspaceProps) {
   const days = useMemo(() => calendarGrid(month), [month]);
   const todayKey = localDateKey(new Date());
 
-  const appointmentsByDay = useMemo(() => {
-    const grouped = new Map<string, Vehicle[]>();
-    for (const vehicle of vehicles) {
-      const parts = appointmentParts(vehicle.appointmentAt);
-      if (parts === null) continue;
-      const entries = grouped.get(parts.date);
-      if (entries === undefined) grouped.set(parts.date, [vehicle]);
-      else entries.push(vehicle);
-    }
-    for (const entries of grouped.values()) {
-      entries.sort((left, right) => {
-        const leftTime = appointmentParts(left.appointmentAt)?.time ?? "";
-        const rightTime = appointmentParts(right.appointmentAt)?.time ?? "";
-        return leftTime.localeCompare(rightTime);
-      });
-    }
-    return grouped;
-  }, [vehicles]);
+  const appointmentsByDay = useMemo(() => groupAppointmentsByDay(vehicles), [vehicles]);
 
   const monthAppointmentCount = useMemo(
     () =>

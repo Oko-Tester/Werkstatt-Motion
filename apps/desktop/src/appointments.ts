@@ -59,3 +59,25 @@ export function localDateKey(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+/** Ordnet Einträge ihrem Tag (`YYYY-MM-DD`) zu, je Tag nach Uhrzeit; ohne Uhrzeit zuerst. */
+export function groupAppointmentsByDay<T extends { appointmentAt: string | null }>(
+  items: readonly T[],
+): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const item of items) {
+    const parts = appointmentParts(item.appointmentAt);
+    if (parts === null) continue;
+    const entries = grouped.get(parts.date);
+    if (entries === undefined) grouped.set(parts.date, [item]);
+    else entries.push(item);
+  }
+  for (const entries of grouped.values()) {
+    entries.sort((left, right) => {
+      const leftTime = appointmentParts(left.appointmentAt)?.time ?? "";
+      const rightTime = appointmentParts(right.appointmentAt)?.time ?? "";
+      return leftTime.localeCompare(rightTime);
+    });
+  }
+  return grouped;
+}
